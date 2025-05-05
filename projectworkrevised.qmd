@@ -1,0 +1,674 @@
+---
+title: "projectworkrevised"
+author: "Caroline Atuhaire"
+format: html
+editor: visual
+---
+
+### Load Libraries
+We begin by loading the necessary R packages for data manipulation 
+```{r message=FALSE, warning=FALSE}
+
+library(tidyverse)
+library(readxl)
+library(janitor)
+library(lubridate)
+library(stringr)
+library(tidycensus)
+library(tigris)
+library(sf)
+library(ggplot2)
+
+# Silence messages from tidycensus
+options(tidycensus.quiet = TRUE)
+
+```
+
+### Load data sets
+
+We define the file path where the SNAP administrative data is stored locally. Using list.files(), we then identify and list all Excel files (.xls) within the directory for later processing.
+
+```{r}
+# Define your local file path 
+data_path <- "C:/Users/Caroline/Desktop/MIDP SEMESTER IV/Introduction to Data Science R/stretchassignment08data/snap-zip-fns388a-4"
+
+# List all Excel files in that folder
+file_list <- list.files(path = data_path, pattern = "\\.xls$", full.names = TRUE)
+
+```
+
+
+### Read the SNAP files in
+
+We define a custom function read_snap_file() to import and clean each Excel file in the SNAP administrative dataset. The function performs the following steps:
+
+Data Import and Cleaning: It reads the file using read_excel(), skipping the first three rows which contain metadata, and cleans the column names with janitor::clean_names(). It also removes any empty or placeholder columns.
+
+Metadata Extraction: The function extracts the month (JAN or JUL) and year from the file name and stores them as new variables. If the year is missing or the key column substate_region is not present, the function returns NULL to skip invalid files.
+
+Variable Construction: It constructs standardized columns including date, region_code, state, county, and office_type by parsing text from the substate_region column.
+
+Variable Selection: Only relevant columns related to participation and issuance (e.g., persons and households by assistance type, total issuance) are retained for further analysis.
+
+This function enables consistent extraction and cleaning of variables across multiple Excel files with
+
+```{r}
+
+read_snap_file <- function(file_path) {
+  snap_df <- read_excel(file_path, skip = 3) %>% clean_names()
+  snap_df <- snap_df %>% select(-matches("^\\.\\.\\.|^x\\d+$"))  # drop empty columns
+
+  file_name <- basename(file_path)
+  month <- str_extract(file_name, "JAN|JUL")
+  year <- str_extract(file_name, "(19|20)\\d{2}") %>% as.numeric()
+
+  if (is.na(year) | !"substate_region" %in% names(snap_df)) return(NULL)
+
+  snap_df <- snap_df %>%
+    mutate(
+      month = month,
+      year = year,
+      date = ym(paste(year, month, "01")),
+      region_code = str_extract(substate_region, "^\\d+"),
+      state = str_extract(substate_region, "\\b[A-Z]{2}\\b"),
+      county = str_extract(substate_region, "(?<=EBT )[A-Z\\s]+?(?= CO| FSO| FS OFFICE| FS OFF\\.|$)"),
+      county = str_remove(county, "\\s+CO\\b") %>% str_trim(),
+      office_type = str_extract(substate_region, "CO FS OFF|FSO|FS OFFICE|FS OFF\\.") %>% str_trim()
+    ) %>%
+    select(
+      date, year, month, state, region_code, county, office_type,
+      snap_all_persons_public_assistance_participation,
+      snap_all_persons_non_public_assistance_participation,
+      calc_snap_total_pa_and_non_pa_people,
+      snap_all_households_public_assistance_participation,
+      snap_all_households_non_public_assistance_participation,
+      calc_snap_total_pa_and_non_pa_households,
+      snap_all_total_actual_pa_non_pa_issuance
+    )
+
+  return(snap_df)
+}
+
+```
+
+We apply the read_snap_file() function to each Excel file using purrr::map_dfr() to efficiently read and combine them into a single tidy data frame, snap_all. To ensure robustness, we wrap the function call in possibly(), which safely skips files that fail to load or parse correctly by returning NULL. We then filter the combined dataset to include only records from 2015 onward. Finally, we use glimpse() to preview the structure of the resulting dataset and verify successful loading and cleaning of the variables.
+
+
+```{r}
+# Define your file path from Step 1
+data_path <- "C:/Users/Caroline/Desktop/MIDP SEMESTER IV/Introduction to Data Science R/stretchassignment08data/snap-zip-fns388a-4"
+
+# List all Excel files in the folder
+file_list <- list.files(path = data_path, pattern = "\\.xls$", full.names = TRUE)
+
+# Read and combine all SNAP files
+snap_all <- map_dfr(file_list, possibly(read_snap_file, otherwise = NULL)) %>%
+  filter(year >= 2015)  
+
+# Preview
+glimpse(snap_all)
+
+```
+
+We load our Census API key and using the tidycensus package to download county-level data from the 2021 ACS 5-Year Estimates. Specifically, we retrieve the number of total households and the number of households receiving SNAP benefits using variables B19058_001 and B19058_002. The data is then cleaned and reshaped into a wide format to calculate the SNAP participation rate (snap_rate) as the proportion of households receiving SNAP benefits relative to total households. We also extract the state FIPS code from the GEOID for summarization purposes. Finally, we compute and display the total number of unique states and counties represented in the dataset, which confirms comprehensive geographic coverage.
+
+```{r}
+# 1. Load API key
+census_api_key("dd8db12242afbd7567dab7970c3909117dab6ca0", install = TRUE, overwrite = TRUE)
+
+# 2. Download ACS county-level SNAP household data
+snap_county <- get_acs(
+  geography = "county",
+  variables = c(
+    total_households = "B19058_001",
+    snap_households  = "B19058_002"
+  ),
+  year = 2019,
+  survey = "acs5",
+  geometry = FALSE,
+  cache_table = TRUE
+)
+# 2. Clean and prepare ACS data
+snap_county_clean <- snap_county %>%
+  select(GEOID, NAME, variable, estimate) %>%
+  pivot_wider(names_from = variable, values_from = estimate) %>%
+  mutate(
+    county = str_remove(NAME, " County,.*"),
+    state = str_extract(NAME, ",\\s*.*$") %>% str_remove(",\\s*"),
+    state = str_trim(state),
+    county = str_trim(county)
+  ) %>%
+  rename(
+    total_households = total_households,
+    fips = GEOID
+  ) %>%
+  select(fips, state, county, total_households)
+
+snap_county <- snap_county %>%
+  select(GEOID, NAME, variable, estimate) %>%
+  pivot_wider(names_from = variable, values_from = estimate) %>%
+  mutate(
+    snap_rate = snap_households / total_households,
+    state_fips = str_sub(GEOID, 1, 2)
+  )
+
+# 4. Summarize number of counties and states
+acs_summary <- tibble(
+  level = c("State", "County"),
+  count = c(
+    n_distinct(snap_county$state_fips),
+    n_distinct(snap_county$GEOID)
+  )
+)
+
+# 5. Print summary
+acs_summary
+
+```
+
+To ensure comparability across datasets, we first exclude U.S. territories from both the SNAP administrative data and the ACS demographic data using their FIPS codes and postal abbreviations. We then identify the number of unique states and counties present in each dataset by source. This summary allows us to assess the completeness of geographic coverage in both datasets and verify alignment prior to any merging or geospatial analysis.
+
+```{r}
+# === Define U.S. Territories to Exclude ===
+territory_fips <- c("60", "66", "69", "72", "78")    # FIPS for AS, GU, MP, PR, VI
+territory_abbr <- c("AS", "GU", "MP", "PR", "VI")    # Postal codes
+
+# === 1. Clean SNAP Data: Drop Territories and NAs ===
+snap_all <- snap_all %>%
+  filter(!state %in% territory_abbr, !is.na(state), !is.na(county))
+
+# === 2. Clean ACS Data: Drop Territories Based on FIPS ===
+snap_county <- snap_county %>%
+  filter(!str_sub(GEOID, 1, 2) %in% territory_fips)
+
+# === 3. Unique States by Source ===
+snap_states <- snap_all %>%
+  distinct(state) %>%
+  mutate(level = "State", source = "SNAP")
+
+acs_states <- snap_county %>%
+  mutate(state = str_sub(GEOID, 1, 2)) %>%
+  distinct(state) %>%
+  mutate(level = "State", source = "ACS")
+
+# === 4. Unique Counties by Source ===
+snap_counties <- snap_all %>%
+  distinct(state, county) %>%
+  mutate(level = "County", source = "SNAP")
+
+acs_counties <- snap_county %>%
+  mutate(state = str_sub(GEOID, 1, 2),
+         county = str_sub(GEOID, 3, 5)) %>%
+  distinct(state, county) %>%
+  mutate(level = "County", source = "ACS")
+
+# === 5. Combine and Summarize ===
+coverage_summary <- bind_rows(snap_states, acs_states, snap_counties, acs_counties) %>%
+  group_by(source, level) %>%
+  summarise(n = n(), .groups = "drop") %>%
+  pivot_wider(names_from = level, values_from = n)
+
+# === 6. Display Summary Table ===
+coverage_summary
+
+```
+
+
+
+
+```{r}
+
+snap_states_list <- snap_states %>%
+  arrange(state) %>%
+  pull(state)
+snap_states_list
+
+```
+
+
+```{r fig.width=12, fig.height=8}
+library(tigris)
+library(sf)
+library(ggplot2)
+library(dplyr)
+
+options(tigris_use_cache = TRUE)
+
+# === 1. Load US states shapefile ===
+us_states <- states(cb = TRUE) %>%
+  filter(!STUSPS %in% c("AS", "GU", "MP", "PR", "VI")) %>%
+  select(state_abbr = STUSPS, geometry)
+
+# === 2. Get SNAP state codes (already prepared as `snap_states`)
+# Note: if your codes are FIPS (e.g. "01"), convert to abbrev
+snap_present_states <- snap_states$state
+
+# === Load high-resolution U.S. states shapefile (includes DC more clearly) ===
+us_states <- tigris::states(cb = FALSE) %>%
+  filter(!STUSPS %in% c("AS", "GU", "MP", "PR", "VI")) %>%
+  select(state_abbr = STUSPS, geometry)
+
+
+# === 3. Create Present/Missing status
+snap_state_map <- us_states %>%
+  mutate(
+    status = ifelse(state_abbr %in% snap_present_states, "Present", "Missing")
+  )
+
+# === 4. Plot the map ===
+ggplot(snap_state_map) +
+  geom_sf(aes(fill = status), color = "white", size = 0.2) +
+  scale_fill_manual(
+    values = c("Present" = "#1f78b4", "Missing" = "red"),
+    name = "SNAP Data"
+  ) +
+  labs(
+    title = "SNAP State Coverage in the United States",
+    subtitle = "States missing from SNAP administrative data are shown in gray",
+    caption = "Source: SNAP administrative data and U.S. Census (ACS)"
+  ) +
+  theme_minimal(base_size = 13) +
+  theme(
+    plot.title = element_text(face = "bold", size = 16),
+    plot.subtitle = element_text(size = 12),
+    legend.position = "bottom"
+  ) +
+  coord_sf(crs = 2163)  # Better US projection
+
+
+```
+
+Although our earlier summary indicated that six states are missing from the SNAP administrative dataset, the map visualization displays only five in red. Upon closer inspection, we find that the missing state not shown on the map is the District of Columbia (DC). 
+```{r}
+# All 50 states + DC (postal codes)
+all_states <- state.abb
+all_states <- c(all_states, "DC")  # Add DC if your data includes it
+snap_states_present <- unique(snap_all$state)
+missing_states_in_snap <- setdiff(all_states, snap_states_present)
+missing_states_in_snap
+
+```
+
+
+
+
+
+```{r}
+library(tigris)
+library(sf)
+library(dplyr)
+library(ggplot2)
+
+options(tigris_use_cache = TRUE)
+
+# === 1. Load U.S. county shapefile ===
+us_counties <- counties(cb = TRUE) %>%
+  filter(!STATEFP %in% c("60", "66", "69", "72", "78")) %>%
+  mutate(GEOID = paste0(STATEFP, COUNTYFP))
+
+# === 2. Prepare GEOID from SNAP data ===
+snap_geoids <- snap_all %>%
+  filter(!is.na(state), !is.na(region_code)) %>%
+  mutate(
+    GEOID = str_sub(region_code, 1, 5)  # Extract standard 5-digit FIPS code
+  ) %>%
+  distinct(GEOID)
+
+# === 3. Tag counties as present or missing ===
+county_map <- us_counties %>%
+  mutate(
+    status = ifelse(GEOID %in% snap_geoids$GEOID, "Present", "Missing")
+  )
+
+# === 4. Plot the map ===
+ggplot(county_map) +
+  geom_sf(aes(fill = status), color = NA) +
+  scale_fill_manual(
+    values = c("Present" = "#1f78b4", "Missing" = "gray80"),
+    name = "SNAP Data"
+  ) +
+  labs(
+    title = "SNAP County Coverage in the United States",
+    subtitle = "Counties missing from SNAP administrative data are shown in gray",
+    caption = "Source: SNAP administrative data"
+  ) +
+  coord_sf(crs = 2163) +
+  theme_minimal(base_size = 12) +
+  theme(
+    legend.position = "bottom",
+    plot.title = element_text(face = "bold", size = 16),
+    plot.subtitle = element_text(size = 12)
+  )
+
+
+```
+
+```{r}
+glimpse(snap_all)
+snap_all %>%
+  select(state, region_code, county) %>%
+  slice_head(n = 10)
+
+```
+
+```{r}
+snap_all %>%
+  mutate(five_digit = str_sub(region_code, 1, 5)) %>%
+  count(five_digit) %>%
+  arrange(five_digit)
+
+```
+
+This means that out of the 2,513 counties in SNAP FSN data, there are 2508 with the 5 digit FIPS code.
+
+```{r}
+
+
+library(tigris)
+library(dplyr)
+library(stringr)
+
+options(tigris_use_cache = TRUE)
+
+# Step 1: Get full county info (excluding territories)
+us_counties <- counties(cb = TRUE) %>%
+  filter(!STATEFP %in% c("60", "66", "69", "72", "78")) %>%
+  mutate(GEOID = paste0(STATEFP, COUNTYFP))
+
+# Ensure missing_counties is defined and character
+missing_counties <- setdiff(us_counties$GEOID, snap_all$region_code %>% str_sub(1, 5))
+missing_counties <- as.character(missing_counties)
+
+# Step 2: Join with missing GEOIDs
+missing_county_info <- us_counties %>%
+  filter(GEOID %in% missing_counties) %>%
+  select(state_name = STATE_NAME, county_name = NAME, GEOID)
+
+# Step 3: Print (first 20)
+print(missing_county_info, n = 20)
+
+
+```
+Out of 3,143 U.S. counties in the ACS data, 664 were missing from the SNAP administrative data. However, 655 of these counties still report SNAP participation rates in the ACS, indicating that most gaps in administrative coverage are supplemented by survey data.
+
+
+```{r}
+library(tigris)
+library(dplyr)
+library(stringr)
+
+options(tigris_use_cache = TRUE)
+
+# === Step 1: Get all U.S. counties (excluding territories) ===
+us_counties <- counties(cb = TRUE) %>%
+  filter(!STATEFP %in% c("60", "66", "69", "72", "78")) %>%
+  mutate(GEOID = paste0(STATEFP, COUNTYFP))
+
+# === Step 2: Extract valid county FIPS codes from SNAP data ===
+snap_fips <- snap_all %>%
+  mutate(county_fips = str_sub(region_code, 1, 5)) %>%
+  distinct(county_fips) %>%
+  pull(county_fips)
+
+# === Step 3: Identify GEOIDs not covered in SNAP ===
+missing_counties <- setdiff(us_counties$GEOID, snap_fips)
+
+# === Step 4: Check if these missing counties appear in ACS ===
+# Ensure ACS GEOID is character
+snap_county <- snap_county %>%
+  mutate(GEOID = as.character(GEOID))
+
+# Filter for overlap
+acs_overlap <- snap_county %>%
+  filter(GEOID %in% missing_counties)
+
+# === Step 5: Summarize the result ===
+n_overlap <- nrow(acs_overlap)
+n_total_missing <- length(missing_counties)
+
+cat("Of the", n_total_missing, "counties missing in SNAP data,", n_overlap,
+    "have SNAP participation data in ACS.\n")
+
+# === Step 6: Preview counties with highest SNAP rate (optional) ===
+acs_overlap %>%
+  select(GEOID, NAME, snap_households, total_households, snap_rate) %>%
+  arrange(desc(snap_rate)) %>%
+  slice_head(n = 10)
+
+n_total_missing <- length(missing_counties)
+
+# Summary sentence using paste()
+paste("Of the", n_total_missing, "counties missing in SNAP data,", 
+      n_overlap, "have SNAP participation data in ACS.")
+```
+
+Among the 664 counties missing from the SNAP administrative dataset, 655 have corresponding SNAP participation data available in the ACS dataset. This means that only 9 counties—less than 1.5% of those missing—are not represented in either dataset. Below are the missing counties
+
+```{r}
+# 1. Get the list of counties missing in both SNAP and ACS
+missing_both <- setdiff(missing_counties, snap_county$GEOID)
+
+# 2. Pull their full names from the US counties shapefile
+missing_both_info <- us_counties %>%
+  filter(GEOID %in% missing_both) %>%
+  select(state_name = STATE_NAME, county_name = NAME, GEOID)
+
+# 3. Print them
+print(missing_both_info, n = Inf)
+
+
+```
+
+
+To compute SNAP participation rates from administrative records, we first aggregated household participation data from the SNAP dataset by county using five-digit FIPS codes. Because the SNAP data contains multiple time points per county, we calculated the average number of participating households across all months for each county. We then merged this summary with ACS county-level data on total households and computed the administrative participation rate as the ratio of average SNAP households to total households. This allowed for a consistent comparison between the two data sources.
+
+
+```{r}
+snap_admin_summary <- snap_all %>%
+  mutate(GEOID = str_sub(region_code, 1, 5)) %>%
+  group_by(GEOID) %>%
+  summarise(snap_households_admin = mean(
+    snap_all_households_public_assistance_participation +
+    snap_all_households_non_public_assistance_participation, na.rm = TRUE),
+    .groups = "drop")
+
+snap_rates_combined <- snap_county %>%
+  select(GEOID, total_households_acs = total_households) %>%
+  left_join(snap_admin_summary, by = "GEOID") %>%
+  mutate(snap_admin_rate = snap_households_admin / total_households_acs)
+
+
+glimpse(snap_rates_combined)
+
+
+```
+
+
+
+```{r}
+
+snap_rates_combined <- snap_rates_combined %>%
+  mutate(fips = str_pad(as.character(GEOID), 5, pad = "0"))
+
+
+```
+
+
+```{r}
+# 1. Load county shapefile (geometries)
+library(tigris)
+library(sf)
+
+options(tigris_use_cache = TRUE)
+
+counties_sf <- counties(cb = TRUE, resolution = "20m", class = "sf") %>%
+  mutate(fips = str_pad(as.character(GEOID), 5, pad = "0"))  # Make sure FIPS is character
+
+# 2. Join your SNAP data to the shapefile
+snap_map_data <- counties_sf %>%
+  left_join(snap_rates_combined, by = "fips") %>%
+  filter(!is.na(snap_admin_rate))  # Remove unmatched or missing rates
+
+# 3. Plot the choropleth map
+library(ggplot2)
+
+ggplot(data = snap_map_data) +
+  geom_sf(aes(fill = snap_admin_rate), color = NA) +
+  scale_fill_viridis_c(
+    option = "plasma",
+    name = "SNAP Participation Rate",
+    labels = scales::percent
+  ) +
+  labs(
+    title = "SNAP Participation Rate by County (Admin Data)",
+    caption = "Admin Rate = Avg SNAP households (Admin) / Total households (ACS 2015–2019)"
+  ) +
+  theme_minimal()
+
+```
+This code below summarizes the distribution of SNAP participation rates and identifies counties with rates exceeding 100%, signaling potential data inconsistencies or mismatches that warrant further review.
+
+
+```{r}
+
+summary(snap_map_data$snap_admin_rate)
+
+
+snap_map_data %>%
+  filter(snap_admin_rate > 1) %>%
+  select(fips, NAME, snap_admin_rate) %>%
+  arrange(desc(snap_admin_rate))
+
+
+```
+
+
+
+
+```{r}
+library(dplyr)
+library(stringr)
+
+# === Step 1: Summarize SNAP households by county (admin data) ===
+snap_admin_summary <- snap_all %>%
+  mutate(GEOID = str_sub(region_code, 1, 5)) %>%
+  group_by(GEOID) %>%
+  summarise(
+    snap_households_admin = mean(
+      snap_all_households_public_assistance_participation +
+      snap_all_households_non_public_assistance_participation,
+      na.rm = TRUE
+    ),
+    .groups = "drop"
+  )
+
+# === Step 2: Merge with ACS data and calculate participation rate ===
+snap_rates_combined <- snap_county %>%
+  select(GEOID, total_households_acs = total_households) %>%
+  left_join(snap_admin_summary, by = "GEOID") %>%
+  mutate(
+    snap_admin_rate = snap_households_admin / total_households_acs,
+    admin_data_available = !is.na(snap_households_admin)
+  )
+
+# === Step 3: Summarize how many counties are missing admin data ===
+snap_rates_combined %>%
+  summarise(
+    total_counties = n(),
+    with_admin_data = sum(admin_data_available),
+    missing_admin_data = sum(!admin_data_available)
+  )
+
+
+```
+
+
+
+
+
+
+
+
+To address missing SNAP participation rates in the administrative data, we imputed values using the ACS-derived participation rates for the same counties. This approach ensures complete coverage for analysis while preserving fidelity to observed ACS data where administrative gaps exist.
+
+
+```{r}
+# First ensure snap_rate exists in snap_county (you may have already done this)
+snap_county <- snap_county %>%
+  mutate(snap_rate_acs = snap_households / total_households)
+
+# Merge ACS rate into the combined dataset
+snap_rates_combined <- snap_rates_combined %>%
+  left_join(snap_county %>% select(GEOID, snap_rate_acs), by = "GEOID") %>%
+  mutate(
+    snap_admin_rate_filled = if_else(
+      is.na(snap_admin_rate),
+      snap_rate_acs,
+      snap_admin_rate
+    )
+  )
+
+```
+
+
+
+We are checking for how many missing data values were filled with the ACS rate
+
+```{r}
+snap_rates_combined %>%
+  summarise(
+    total_counties = n(),
+    originally_missing_admin = sum(is.na(snap_admin_rate)),
+    filled_with_acs = sum(is.na(snap_admin_rate) & !is.na(snap_admin_rate_filled)),
+    still_missing = sum(is.na(snap_admin_rate_filled))
+  )
+
+```
+
+
+
+
+```{r}
+library(tigris)
+library(sf)
+library(ggplot2)
+
+options(tigris_use_cache = TRUE)
+
+# 1. Load and prepare U.S. counties shapefile
+us_counties <- counties(cb = TRUE) %>%
+  filter(!STATEFP %in% c("60", "66", "69", "72", "78")) %>%
+  mutate(GEOID = paste0(STATEFP, COUNTYFP))
+
+# 2. Join with your combined SNAP rates dataset
+map_data <- us_counties %>%
+  left_join(snap_rates_combined, by = "GEOID")
+
+# 3. Plot the map using snap_admin_rate_filled
+# 3. Plot the map, excluding rates > 1 (100%)
+ggplot(
+  map_data %>% 
+    filter(snap_admin_rate_filled <= 1)  # exclude invalid rates
+) +
+  geom_sf(aes(fill = snap_admin_rate_filled), color = NA) +
+  scale_fill_viridis_c(
+    option = "plasma",
+    na.value = "gray90",
+    name = "SNAP Participation Rate",
+    labels = scales::percent_format(accuracy = 1)
+  ) +
+  labs(
+    title = "SNAP Participation Rates by County (Admin + ACS Imputed)",
+    caption = "Filled with ACS rates where administrative data was missing"
+  ) +
+  coord_sf(crs = 2163) +
+  theme_minimal(base_size = 13) +
+  theme(
+    plot.title = element_text(face = "bold", size = 16),
+    legend.position = "bottom"
+  )
+
+```
+
+
+
