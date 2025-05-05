@@ -6,12 +6,15 @@ editor: visual
 
 ## Creating dataset
 
+Notes:
+
+-   Try some models with dummy vars for the categorical variables and others leaving them as a single variable
+
 ```{r}
 library(tidyverse)
 library(readxl)
 
 poldb <- read_xlsx("/Users/JohnnyWilling/Documents/Grad school/Spring 2025/PPOL 6803 Intro Data Science/final_project/SNAPPolicyDatabase.xlsx", sheet = "SNAP Policy Database")
-  
 
 abawd_waivers <- read_xlsx("/Users/JohnnyWilling/Documents/Grad school/Spring 2025/PPOL 6803 Intro Data Science/final_project/SNAPPolicyDatabase.xlsx", sheet = "ABAWD Waivers")
 
@@ -46,4 +49,3 @@ combined_poldb <- poldb |>
          ))
 
 ```
-

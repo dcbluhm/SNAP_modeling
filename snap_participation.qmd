@@ -1,0 +1,81 @@
+---
+title: "SNAP Household Participation Rates"
+format: html
+editor: visual
+---
+
+
+```{r message=FALSE, warning=FALSE}
+
+library(tidyverse)
+library(readxl)
+library(janitor)
+library(lubridate)
+library(stringr)
+library(tidycensus)
+library(tigris)
+library(sf)
+library(ggplot2)
+
+# Silence messages from tidycensus
+options(tidycensus.quiet = TRUE)
+
+```
+
+```{r}
+# Define your local file path 
+data_path <- "/Users/JohnnyWilling/Documents/Grad school/Spring 2025/PPOL 6803 Intro Data Science/final_project/SNAP_modeling/data/snap-zip-fns388a-4"
+
+# List all Excel files in that folder
+file_list <- list.files(path = data_path, pattern = "\\.xlsx?$", full.names = TRUE)
+
+```
+
+```{r}
+read_snap_file <- function(file_path) {
+  snap_df <- read_excel(file_path, skip = 3) %>% clean_names()
+  snap_df <- snap_df %>% select(-matches("^\\.\\.\\.|^x\\d+$"))  # drop empty columns
+
+  file_name <- basename(file_path)
+  file_month <- str_extract(file_name, "^[A-Za-z]+(?=\\s*\\d{4})")
+  year <- str_extract(file_name, "\\d{4}(?=\\.)") %>% as.numeric()
+  
+  snap_df <- snap_df %>%
+    mutate(
+      month = case_when(
+        file_month == "JUL" ~ 7,
+        file_month == "Jul" ~ 7,
+        file_month == "July" ~ 7,
+        TRUE ~ 1
+      ),
+      year = year,
+      state_code = str_sub(substate_region, 1, 2),
+      county_code = str_sub(substate_region, 3, 5),
+    ) %>%
+    select(
+      year, month, state_code, county_code,
+      calc_snap_total_pa_and_non_pa_households
+    ) |>
+    group_by(year, month, state_code, county_code) |>
+    summarize(snap_households = sum(calc_snap_total_pa_and_non_pa_households)) |>
+    filter(!str_detect(state_code, "\\D"))
+
+  return(snap_df)
+}
+
+```
+
+```{r}
+snap_jul2023 <- read_snap_file("/Users/JohnnyWilling/Documents/Grad school/Spring 2025/PPOL 6803 Intro Data Science/final_project/SNAP_modeling/data/snap-zip-fns388a-4/July 2023.xlsx")
+
+snap_all <- map_dfr(file_list, possibly(read_snap_file, otherwise = NULL)) %>%
+  filter(year %in% c(2015,2016,2017,2018,2019,2023))
+
+table(snap_all$year, snap_all$month)
+
+```
+
+```{r}
+
+
+```
