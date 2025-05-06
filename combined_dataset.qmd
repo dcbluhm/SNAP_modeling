@@ -524,16 +524,17 @@ combined_poldb <- poldb |>
 snap_2model <- snap_participation |>
   left_join(demographic_combined, by = c("GEOID", "year")) |>
   left_join(combined_poldb, by = c("state_fips", "year")) |>
+  select(-median_income_individual) |>
   drop_na() |>
-  filter(snap_participation_rate < 1) |>
-  select(-median_income_individual)
+  filter(snap_participation_rate < 1)
 
 county_observations <- snap_2model |>
-  group_by(GEOID, year) |>
-  summarize(num_obs = n())
+  group_by(GEOID) |>
+  summarize(num_obs = n()) |>
+  filter(num_obs < 6)
 
 snap_2model <- snap_2model |>
-  left_join(county_observations, by = c("GEOID", "year"))
+  anti_join(county_observations, by = c("GEOID"))
 
 View(filter(snap_2model |> filter(num_obs>1)))
 
