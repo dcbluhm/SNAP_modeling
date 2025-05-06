@@ -474,11 +474,11 @@ demographic_combined <- demographic_combined |>
 ```{r}
 library(readxl)
 
-poldb <- read_xlsx("/Users/JohnnyWilling/Documents/Grad school/Spring 2025/PPOL 6803 Intro Data Science/final_project/SNAPPolicyDatabase.xlsx", sheet = "SNAP Policy Database")
+poldb <- read_xlsx("data/SNAPPolicyDatabase.xlsx", sheet = "SNAP Policy Database")
 
-abawd_waivers <- read_xlsx("/Users/JohnnyWilling/Documents/Grad school/Spring 2025/PPOL 6803 Intro Data Science/final_project/SNAPPolicyDatabase.xlsx", sheet = "ABAWD Waivers")
+abawd_waivers <- read_xlsx("data/SNAPPolicyDatabase.xlsx", sheet = "ABAWD Waivers")
 
-poldb_2023 <- read_xlsx("/Users/JohnnyWilling/Documents/Grad school/Spring 2025/PPOL 6803 Intro Data Science/final_project/SNAPPolicyDatabase.xlsx", sheet = "2023 Data")
+poldb_2023 <- read_xlsx("data/SNAPPolicyDatabase.xlsx", sheet = "2023 Data")
 
 mode <- function(x) {
   u <- unique(x)
@@ -565,7 +565,7 @@ snap_folds <- rolling_origin(snap_train, initial = 3119, assess = 3119, cumulati
 # create recipe
 snap_rec <- 
   recipe(formula = snap_participation_rate ~ ., data = snap_train) |>
-    step_zv() |>
+    step_zv(all_predictors()) |>
     update_role(GEOID, new_role = "id variable") |>
     step_mutate(bbce_inclmt = if_else(bbce_inclmt == -9, 130, bbce_inclmt),
               bbce_asset = case_when(
@@ -607,6 +607,9 @@ lm_res |>
 
 lm_res |>
   autoplot()
+
+lm_best <- lm_res |>
+  select_best("rmse")
 
 ```
 
