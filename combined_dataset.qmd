@@ -75,8 +75,6 @@ fns_snap_county <- map_dfr(counties_filelist, possibly(read_snap_file, otherwise
   group_by(year, GEOID, state_code, county_code) |>
   summarize(fns_snap_households = round(mean(fns_snap_households)))
 
-table(snap_all$year, snap_all$month)
-
 ```
 
 ```{r}
@@ -218,6 +216,10 @@ snap_map |>
 table(us_counties$STATE_NAME)
 
 table(snap_participation$state_name,snap_participation$year)
+
+colSums(is.na(snap_participation))
+
+view(snap_participation |> filter(snap_participation_rate > 1))
 
 ```
 
@@ -495,6 +497,10 @@ combined_poldb <- poldb |>
   summarize(bbce = mode(bbce),
             bbce_asset = mode(bbce_asset),
             bbce_inclmt = mode(bbce_inclmt)) |>
+  group_by(year,state_fips) |>
+    summarize(bbce = last(bbce),
+            bbce_asset = last(bbce_asset),
+            bbce_inclmt = last(bbce_inclmt)) |>
   left_join(abawd_waivers, by = c("state_fips", "year")) |>
   bind_rows(poldb_2023) |>
   filter(year > 2014,
@@ -523,12 +529,19 @@ snap_2model <- snap_participation |>
   select(-median_income_individual)
 
 county_observations <- snap_2model |>
-  group_by(GEOID) |>
-  summarize(num_obs = n()) |>
-  filter(num_obs<6)
+  group_by(GEOID, year) |>
+  summarize(num_obs = n())
 
 snap_2model <- snap_2model |>
-  anti_join(county_observations, by = "GEOID")
+  left_join(county_observations, by = c("GEOID", "year"))
+
+View(filter(snap_2model |> filter(num_obs>1)))
+
+snap_2model |>
+  group_by(GEOID) |>
+  summarize(num_years = n()) |>
+  filter(num_years < 6) |>
+  view()
 
 ```
 
@@ -541,12 +554,18 @@ snap_test <- snap_2model |>
 snap_train <- snap_2model |>
   filter(year!=2023)
 
+snap_train |> group_by(year) |> summarize(n = n())
+
 ```
 
 ## Exploratory Data Analysis
 
-
 ## Training models
+
+```{r}
+snap_folds <- rolling_origin(snap_train, initial = 1, assess = 1, cumulative = FALSE)
+
+```
 
 ## Testing final model
 
