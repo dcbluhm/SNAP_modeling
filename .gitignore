@@ -50,3 +50,6 @@ rsconnect/
 
 # Data files
 data/
+
+# R project
+.Rproj

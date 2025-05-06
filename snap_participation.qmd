@@ -4,6 +4,7 @@ format: html
 editor: visual
 ---
 
+NOTE: CT changed how their counties are organized, so the county groupings from 2015-2019 no longer seem to apply - can ask Alena about this, but seems like we may just want to drop. AK also added a county, but it seems like most of them are still the same, so it should be ok to include.
 
 ```{r message=FALSE, warning=FALSE}
 
@@ -23,24 +24,23 @@ options(tidycensus.quiet = TRUE)
 ```
 
 ```{r}
-# Define your local file path 
-data_path <- "/Users/JohnnyWilling/Documents/Grad school/Spring 2025/PPOL 6803 Intro Data Science/final_project/SNAP_modeling/data/snap-zip-fns388a-4"
-
-# List all Excel files in that folder
-file_list <- list.files(path = data_path, pattern = "\\.xlsx?$", full.names = TRUE)
+counties_filepath <- "data/snap-zip-fns388a-4"
+counties_filelist <- list.files(path = counties_filepath, pattern = "\\.xlsx?$", full.names = TRUE)
 
 ```
 
 ```{r}
+
+# function to read in SNAP county data files downloaded from FNS
 read_snap_file <- function(file_path) {
-  snap_df <- read_excel(file_path, skip = 3) %>% clean_names()
+  snap_df <- read_excel(file_path, skip = 3) |> clean_names()
   snap_df <- snap_df %>% select(-matches("^\\.\\.\\.|^x\\d+$"))  # drop empty columns
 
   file_name <- basename(file_path)
   file_month <- str_extract(file_name, "^[A-Za-z]+(?=\\s*\\d{4})")
   year <- str_extract(file_name, "\\d{4}(?=\\.)") %>% as.numeric()
   
-  snap_df <- snap_df %>%
+  snap_df <- snap_df |>
     mutate(
       month = case_when(
         file_month == "JUL" ~ 7,
@@ -51,13 +51,14 @@ read_snap_file <- function(file_path) {
       year = year,
       state_code = str_sub(substate_region, 1, 2),
       county_code = str_sub(substate_region, 3, 5),
+      GEOID = str_sub(substate_region, 1, 5)
     ) %>%
     select(
-      year, month, state_code, county_code,
+      year, month, GEOID, state_code, county_code,
       calc_snap_total_pa_and_non_pa_households
     ) |>
-    group_by(year, month, state_code, county_code) |>
-    summarize(snap_households = sum(calc_snap_total_pa_and_non_pa_households)) |>
+    group_by(year, month, state_code, county_code, GEOID) |>
+    summarize(fns_snap_households = sum(calc_snap_total_pa_and_non_pa_households)) |>
     filter(!str_detect(state_code, "\\D"))
 
   return(snap_df)
@@ -66,10 +67,11 @@ read_snap_file <- function(file_path) {
 ```
 
 ```{r}
-snap_jul2023 <- read_snap_file("/Users/JohnnyWilling/Documents/Grad school/Spring 2025/PPOL 6803 Intro Data Science/final_project/SNAP_modeling/data/snap-zip-fns388a-4/July 2023.xlsx")
 
-snap_all <- map_dfr(file_list, possibly(read_snap_file, otherwise = NULL)) %>%
-  filter(year %in% c(2015,2016,2017,2018,2019,2023))
+fns_snap_county <- map_dfr(counties_filelist, possibly(read_snap_file, otherwise = NULL)) %>%
+  filter(year %in% c(2015,2016,2017,2018,2019,2023)) |>
+  group_by(year, GEOID, state_code, county_code) |>
+  summarize(fns_snap_households = round(mean(fns_snap_households)))
 
 table(snap_all$year, snap_all$month)
 
@@ -77,5 +79,143 @@ table(snap_all$year, snap_all$month)
 
 ```{r}
 
+# function to read in SNAP state totals downloaded from FNS
+read_state_totals <- function(file_path) {
+  filename <- basename(file_path)
+  FY <- as.numeric(str_extract(filename, "(?<=FY)\\d{2}"))
+  FY <- 2000 + FY
+  if (FY > 2019) {
+    rows_list <- list(
+      NERO = c("A8:B20", "A23:B35", "A38:B50", "A53:B65", "A68:B80", "A83:B95", "A98:B110"), 
+      MARO = c("A8:B20", "A23:B35", "A38:B50", "A53:B65", "A68:B80", "A98:B110", "A113:B125"), 
+      SERO = c("A8:B20", "A23:B35", "A38:B50", "A53:B65", "A68:B80", "A83:B95", "A98:B110", "A113:B125"), 
+      MWRO = c("A8:B20", "A23:B35", "A38:B50", "A53:B65", "A68:B80", "A83:B95", "A98:B110"), 
+      SWRO = c("A8:B20", "A23:B35", "A38:B50", "A53:B65", "A68:B80", "A83:B95", "A98:B110"), 
+      MPRO = c("A8:B20", "A23:B35", "A38:B50", "A53:B65", "A68:B80", "A83:B95", "A98:B110", "A113:B125"), 
+      WRO = c("A8:B20", "A38:B50", "A68:B80", "A83:B95", "A98:B110", "A113:B125", "A128:B140"))
+  
+  } else if (FY %in% c(2015, 2016)) {
+    rows_list <- list(
+      NERO = c("A8:B20", "A23:B35", "A38:B50", "A53:B65", "A68:B80", "A83:B95", "A98:B110"), 
+      MARO = c("A8:B20", "A23:B35", "A38:B50", "A53:B65", "A68:B80", "A85:B97", "A115:B127"), 
+      SERO = c("A8:B20", "A23:B35", "A38:B50", "A53:B65", "A68:B80", "A83:B95", "A98:B110", "A113:B125"), 
+      MWRO = c("A8:B20", "A23:B35", "A38:B50", "A53:B65", "A68:B80", "A83:B95"), 
+      SWRO = c("A8:B20", "A23:B35", "A38:B50", "A53:B65", "A68:B80"), 
+      MPRO = c("A8:B20", "A23:B35", "A38:B50", "A53:B65", "A68:B80", "A83:B95", "A98:B110", "A113:B125", "A128:B140", "A143:B155"), 
+      WRO = c("A8:B20", "A25:B37", "A40:B52", "A70:B82", "A85:B97", "A100:B112", "A115:B127", "A130:B142"))
+
+  } else {
+    rows_list <- list(
+      NERO = c("A8:B20", "A23:B35", "A38:B50", "A53:B65", "A68:B80", "A83:B95", "A98:B110"), 
+      MARO = c("A8:B20", "A23:B35", "A38:B50", "A53:B65", "A68:B80", "A85:B97", "A100:B112"), 
+      SERO = c("A8:B20", "A23:B35", "A38:B50", "A53:B65", "A68:B80", "A83:B95", "A98:B110", "A113:B125"), 
+      MWRO = c("A8:B20", "A23:B35", "A38:B50", "A53:B65", "A68:B80", "A83:B95", "A98:B110"), 
+      SWRO = c("A8:B20", "A23:B35", "A38:B50", "A53:B65", "A68:B80", "A83:B95", "A98:B110"), 
+      MPRO = c("A8:B20", "A23:B35", "A38:B50", "A53:B65", "A68:B80", "A83:B95", "A98:B110", "A113:B125"), 
+      WRO = c("A8:B20", "A25:B37", "A55:B67", "A70:B82", "A85:B97", "A100:B112", "A115:B127"))
+  }
+  
+  map_dfr(names(rows_list), function(sheet_name) {
+    ranges <- rows_list[[sheet_name]]
+
+    map_dfr(ranges, function(range) {
+      df <- read_excel(file_path, sheet = sheet_name, range = range, col_names = FALSE)
+
+      df <- df |>
+        setNames(c("month", "households")) |>
+        mutate(
+          state_name = month[1],
+          year = str_extract(month, "20\\d{2}"),
+          month = str_sub(month, 1, 3)
+        ) |>
+        filter(!is.na(households))
+
+      return(df)
+    })
+  })
+}
+
+state_filepath <- "data/snap_state_totals"
+state_filelist <- list.files(path = state_filepath, pattern = "\\.xlsx?$", full.names = TRUE)
+
+fns_state_totals <- map_dfr(state_filelist, read_state_totals) |>
+  filter(!year %in% c(2014, 2020, 2022, 2024)) |>
+  group_by(year, state_name) |>
+  summarize(fns_snap_households = round(mean(households)))
+
+table(state_totals$year)
+  
+```
+
+```{r}
+
+# pull in SNAP data from ACS
+acs_years <- list(2015, 2016, 2017, 2018, 2019, 2023)
+
+acs_snap_county <- map_dfr(
+  acs_years, 
+  ~get_acs(
+    geography = "county",
+    variables = c(
+      total_households = "B19058_001",
+      acs_snap_households  = "B19058_002"
+    ),
+    year = .x,
+    survey = "acs5",
+    geometry = FALSE,
+    cache_table = TRUE
+  ) |> mutate(year = .x)) |>
+  select(year, GEOID, NAME, variable, estimate) |>
+  pivot_wider(names_from = variable, values_from = estimate) |>
+  mutate(
+    acs_snap_rate = acs_snap_households / total_households,
+    state_fips = str_sub(GEOID, 1, 2)
+  ) |>
+  filter(!state_fips %in% c("60", "66", "69", "72", "78"))
+
+acs_state_totals <- acs_snap_county |>
+  group_by(year, state_fips) |>
+  summarize(acs_snap_households = sum(snap_households))
+
+state_fips <- fips_codes |>
+  select(state_code, state_name) |>
+  distinct(state_code, .keep_all = TRUE)
+
+acs_inflators <- fns_state_totals |>
+  left_join(state_fips, by = "state_name") |>
+  mutate(year = as.numeric(year)) |>
+  left_join(acs_state_totals, by = c("state_code" = "state_fips", "year" = "year")) |>
+  group_by(year, state_code) |>
+  mutate(inflator = fns_snap_households/acs_snap_households) |>
+  select(year, state_name, state_code, inflator)
+
+acs_snap_county_infl <- acs_snap_county |>
+  left_join(acs_inflators, by = c("state_fips" = "state_code", "year" = "year")) |>
+  mutate(acs_snap_rate_infl = acs_snap_rate*inflator)
+
+snap_participation <- acs_snap_county_infl |>
+  full_join(fns_snap_county, by = c("GEOID", "year")) |>
+  mutate(fns_snap_rate = fns_snap_households/total_households,
+         snap_participation_rate = if_else(!is.na(fns_snap_rate), fns_snap_rate, acs_snap_rate_infl),
+         snap_rate_acs = if_else(!is.na(fns_snap_rate), 0, 1)) |>
+  select(year, GEOID, state_name, snap_participation_rate, snap_rate_acs)
+
+us_counties <- counties(cb = TRUE) |>
+  filter(!STATEFP %in% c("60", "66", "69", "72", "78", "02", "15"))
+
+snap_map <- us_counties |>
+  left_join(snap_participation, by = "GEOID")
+
+snap_map |>
+  filter(year == 2015) |>
+  ggplot() +
+  geom_sf(mapping = aes(fill = snap_participation_rate)) +
+  scale_fill_gradient(low = "#cfe8f3", high = "#062635") +
+  theme_void()
+
+table(us_counties$STATE_NAME)
+
+table(snap_participation$state_name,snap_participation$year)
 
 ```
+
