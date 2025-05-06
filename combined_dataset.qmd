@@ -518,6 +518,7 @@ combined_poldb <- poldb |>
 ```
 
 ## Merging datasets
+
 ```{r}
 snap_2model <- snap_participation |>
   left_join(demographic_combined, by = c("GEOID", "year")) |>
@@ -587,6 +588,91 @@ snap_rec <-
 
 ```
 
+Linear Regression Electric Net
+```{r}
+lm_spec <- linear_reg(penalty = tune(),
+                      mixture = .5) |>
+  set_engine("glmnet") |>
+  set_mode("regression")
+
+lm_grid <- grid_regular(penalty(levels = 10))
+
+
+lm_wf <- workflow() |>
+  add_recipe(snap_rec) |>
+  add_model(lm_spec)
+
+lm_res <- lm_wf |>
+  tune_grid(resamples = snap_folds,
+            grid = lm_grid,
+            metrics = metric_set(rmse, mae))
+
+lm_res |>
+  collect_metrics()
+
+lm_res |>
+  autoplot()
+```
+
+KNN
+```{r}
+knn_spec <- nearest_neighbor(neighbors = tune()) |>
+  set_engine(engine = "kknn") |>
+  set_mode(mode = "regression")
+
+knn_wf <- workflow() |>
+  add_model(spec = knn_spec) |>
+  add_recipe(recipe = )
+
+knn_grid <- grid_regular(neighbors(range = c(1, 15)), levels = 8)
+
+knn_res <- knn_wf |>
+  tune_grid(resamples = snap_folds, 
+            grid = knn_grid,
+            control = control_grid(save_pred = TRUE),
+            metrics = metric_set(rmse, rsq))
+
+#Choosing model from RMSE
+knn_best <- knn_res |>
+  select_best("rmse")
+
+#finalize the workflow using the established workflow and the best model (according to RMSE)
+knn_final <- knn_wf |>
+  finalize_workflow(parameters = knn_best)
+
+#fitting the workflow with the original data
+knn_fit <- knn_final |>
+  fit(snap_train)
+
+#applying the updated workflow to the fit across folds
+knn_fit_rs <- knn_final |>
+  fit_resamples(resamples = snap_folds)
+```
+
+XGBoost
+```{r}
+xgboost_spec <- boost_tree(
+  trees = 500,
+  tree_depth = 6,
+  learn_rate = .01,
+  min_n = 5) |>
+  set_mode("regression") |>
+  set_engine("xgboost")
+
+#Tuning version
+xgboost_spec <- boost_tree(
+  trees = tune(),
+  tree_depth = tune(),
+  learn_rate = tune(),
+  min_n = 5) |>
+  set_mode("regression") |>
+  set_engine("xgboost")
+
+xgboost_wf <- workflow() |>
+  add_recipe() |>
+  add_model(xgboost_spec)
+
+```
 ## Testing final model
 
 ## Implementing model (fingers crossed)
