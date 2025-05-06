@@ -143,8 +143,6 @@ fns_state_totals <- map_dfr(state_filelist, read_state_totals) |>
   group_by(year, state_name) |>
   summarize(fns_snap_households = round(mean(households)))
 
-table(state_totals$year)
-  
 ```
 
 ```{r}
@@ -524,7 +522,7 @@ combined_poldb <- poldb |>
 snap_2model <- snap_participation |>
   left_join(demographic_combined, by = c("GEOID", "year")) |>
   left_join(combined_poldb, by = c("state_fips", "year")) |>
-  select(-median_income_individual) |>
+  select(-c(median_income_individual, state_name, NAME, snap_recipient_hh_prior12, snap_pct)) |>
   drop_na() |>
   filter(snap_participation_rate < 1)
 
@@ -535,8 +533,6 @@ county_observations <- snap_2model |>
 
 snap_2model <- snap_2model |>
   anti_join(county_observations, by = c("GEOID"))
-
-View(filter(snap_2model |> filter(num_obs>1)))
 
 snap_2model |>
   group_by(GEOID) |>
@@ -553,7 +549,8 @@ snap_test <- snap_2model |>
   filter(year==2023)
 
 snap_train <- snap_2model |>
-  filter(year!=2023)
+  filter(year!=2023) |>
+  arrange(year)
 
 snap_train |> group_by(year) |> summarize(n = n())
 
@@ -564,7 +561,29 @@ snap_train |> group_by(year) |> summarize(n = n())
 ## Training models
 
 ```{r}
-snap_folds <- rolling_origin(snap_train, initial = 1, assess = 1, cumulative = FALSE)
+library(tidymodels)
+
+# set up folds
+snap_folds <- rolling_origin(snap_train, initial = 3119, assess = 3119, cumulative = FALSE)
+
+# create recipe
+snap_rec <- 
+  recipe(formula = snap_participation_rate ~ ., data = snap_train) |>
+    step_zv() |>
+    update_role(GEOID, new_role = "id variable") |>
+    step_mutate(bbce_inclmt = if_else(bbce_inclmt == -9, 130, bbce_inclmt),
+              bbce_asset = case_when(
+                bbce_asset == 1 ~ 2,
+                bbce_asset == 0 ~ 1,
+                bbce_asset == -9 ~ 0
+              ),
+              bbce_inclmt = factor(bbce_inclmt),
+              bbce_asset = factor(bbce_asset),
+              abawd_waivers = factor(abawd_waivers)) |>
+  step_interact(terms = ~ poverty_pct:bbce_inclmt + median_household_income:bbce_inclmt) |> 
+  step_normalize(all_numeric_predictors(), -c(snap_rate_acs, rural_urban_score, governor_is_democrat_1_yes, bbce)) |>
+  step_dummy(all_nominal_predictors()) |>
+  step_interact(terms = ~ unemployment_rate:starts_with("abawdwaiver"))
 
 ```
 
