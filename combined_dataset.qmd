@@ -424,9 +424,6 @@ demographic_combined <-  census_urban_rural |>
 
 #Last cleaning details and Exploration
 #####
-View(demographic_combined |>
-  filter(is.na(governor_is_democrat_1_yes))) #All DC and PR
-
 demographic_combined <- demographic_combined |>
   filter(state_fips != 72) #Filtering out PR
 
@@ -535,11 +532,9 @@ county_observations <- snap_2model |>
 snap_2model <- snap_2model |>
   anti_join(county_observations, by = c("GEOID"))
 
-snap_2model |>
-  group_by(GEOID) |>
-  summarize(num_years = n()) |>
-  filter(num_years < 6) |>
-  view()
+rm(combined_poldb, county_observations, demographic_combined, fns_snap_county, fns_state_totals,
+   ky_welfare, poldb, poldb_2023, ruralurbancodes2013, ruralurbancodes2023, snap_2015,
+   snap_2016, snap_2017, snap_2018, snap_2019, snap_2023, snap_participation, state_fips, us_counties)
 
 ```
 
@@ -578,9 +573,8 @@ snap_rec <-
                 bbce_asset == 0 ~ 1,
                 bbce_asset == -9 ~ 0
               ),
-              bbce_inclmt = factor(bbce_inclmt),
               bbce_asset = factor(bbce_asset),
-              abawd_waivers = factor(abawd_waivers)) |>
+              abawdwaiver = factor(abawdwaiver)) |>
   step_interact(terms = ~ poverty_pct:bbce_inclmt + median_household_income:bbce_inclmt) |> 
   step_normalize(all_numeric_predictors(), -c(snap_rate_acs, rural_urban_score, governor_is_democrat_1_yes, bbce)) |>
   step_dummy(all_nominal_predictors()) |>
@@ -589,13 +583,14 @@ snap_rec <-
 ```
 
 Linear Regression Electric Net
+
 ```{r}
 lm_spec <- linear_reg(penalty = tune(),
                       mixture = .5) |>
   set_engine("glmnet") |>
   set_mode("regression")
 
-lm_grid <- grid_regular(penalty(levels = 10))
+lm_grid <- grid_regular(penalty(), levels = 10)
 
 
 lm_wf <- workflow() |>
@@ -612,9 +607,11 @@ lm_res |>
 
 lm_res |>
   autoplot()
+
 ```
 
 KNN
+
 ```{r}
 knn_spec <- nearest_neighbor(neighbors = tune()) |>
   set_engine(engine = "kknn") |>
@@ -622,7 +619,7 @@ knn_spec <- nearest_neighbor(neighbors = tune()) |>
 
 knn_wf <- workflow() |>
   add_model(spec = knn_spec) |>
-  add_recipe(recipe = )
+  add_recipe(recipe = snap_rec)
 
 knn_grid <- grid_regular(neighbors(range = c(1, 15)), levels = 8)
 
@@ -650,6 +647,7 @@ knn_fit_rs <- knn_final |>
 ```
 
 XGBoost
+
 ```{r}
 xgboost_spec <- boost_tree(
   trees = 500,
@@ -673,6 +671,7 @@ xgboost_wf <- workflow() |>
   add_model(xgboost_spec)
 
 ```
+
 ## Testing final model
 
 ## Implementing model (fingers crossed)
