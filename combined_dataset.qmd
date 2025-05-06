@@ -531,3 +531,23 @@ snap_2model <- snap_2model |>
   anti_join(county_observations, by = "GEOID")
 
 ```
+
+## Split up testing and training
+
+```{r}
+snap_test <- snap_2model |>
+  filter(year==2023)
+
+snap_train <- snap_2model |>
+  filter(year!=2023)
+
+```
+
+## Exploratory Data Analysis
+
+
+## Training models
+
+## Testing final model
+
+## Implementing model (fingers crossed)
