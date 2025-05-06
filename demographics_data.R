@@ -12,19 +12,22 @@ library(readxl)
 census_vars <- tidycensus::load_variables(year = 2016,
                                           dataset = c("acs1"))
 
-#B06011_001E is median income
+V#B06011_001E is median income
 #B19013_001 is median household income in past 12 months (colinearity w/median income?)
 #B01001_001E is total population
 #B01001_002E is number of males
 #B17001_002E is number below poverty line
 #B01002_001 is median age (total)
-#B02001_002 is total number white (_001 is overall)
+#B03002_003 is total number of non-hispanic white (_001 is overall)
 #B15003_017 to _025 is education attainment levels
 #B11001_002 is number of family households (_001 is overall)
 #B18101_001 is total number disabled status
       #_004,_007, etc are number that are disabled for age/sex groups
 #B25003_003 is total number of renters (_001 is overall)
 #B22001_002 is total number of households that received food stamps in prior 12 months (_001 is overall)
+#B05001_006 is total number of non-citizens (_001 is overall)
+#B01001_020-25 and _044-049 is total over 65 (_001 is overall)
+
 
 get_snap <- function(year) {
   
@@ -32,7 +35,7 @@ get_snap <- function(year) {
   
   snap_vars <- c("B06011_001E", "B01001_001E", "B01001_002E",
                       "B17001_002E", "B17001_001E", "B19013_001",
-                      "B01002_001", "B02001_002", "B02001_001",
+                      "B01002_001", "B03002_003", "B03002_001",
                       "B15003_017", "B15003_018", "B15003_019",
                       "B15003_020", "B15003_021", "B15003_022",
                       "B15003_023", "B15003_024", "B15003_025",
@@ -40,7 +43,10 @@ get_snap <- function(year) {
                       "B25003_001", "B18101_001", "B22001_002", "B22001_001",
                  "B18101_004", "B18101_007", "B18101_010", "B18101_013",
                  "B18101_016", "B18101_019", "B18101_022", "B18101_025",
-                 "B18101_028", "B18101_031")
+                 "B18101_028", "B18101_031", "B05001_006", "B05001_001",
+                 "B01001_020", "B01001_021", "B01001_022", "B01001_023",
+                 "B01001_024", "B01001_025", "B01001_044", "B01001_045",
+                 "B01001_046", "B01001_047", "B01001_048", "B01001_049")
   
   snap_vars_nosuffix <- gsub("E$", "", snap_vars)
   
@@ -66,8 +72,8 @@ get_snap <- function(year) {
       variable == "B17001_001" ~ "poverty_total",
       variable == "B19013_001"  ~ "median_household_income",
       variable == "B01002_001"  ~ "median_age",
-      variable == "B02001_002"  ~ "white_alone",
-      variable == "B02001_001"  ~ "total_race_population",
+      variable == "B03002_003"  ~ "white_alone",
+      variable == "B03002_001"  ~ "total_race_population",
       variable == "B15003_017"  ~ "hs_grad",
       variable == "B15003_018"  ~ "some_college_less_1yr",
       variable == "B15003_019"  ~ "some_college_more_1yr",
@@ -84,6 +90,8 @@ get_snap <- function(year) {
       variable == "B18101_001"  ~ "total_disability_universe",
       variable == "B22001_002"  ~ "snap_recipient_hh_prior12",
       variable == "B22001_001"  ~ "total_snap_universe",
+      variable == "B05001_006" ~ "non_citizens",
+      variable == "B05001_001" ~ "non_citizens_universe",
       TRUE ~ variable  # keep original name if no match
     ))
   
@@ -104,10 +112,16 @@ get_snap <- function(year) {
                              B18101_016 + B18101_019 + B18101_022 + B18101_025 +
                              B18101_028 + B18101_031)/total_disability_universe),
            snap_pct = (snap_recipient_hh_prior12/total_snap_universe),
-           renter_pct = (renter_occupied/total_occupied_housing)) |>
+           renter_pct = (renter_occupied/total_occupied_housing),
+           non_citizen_pct = (non_citizens/non_citizens_universe),
+           over_65_pct = ((B01001_020 + B01001_021 + B01001_022 + B01001_023 + 
+                             B01001_024 + B01001_025 + B01001_044 + B01001_045 +
+                             B01001_046 + B01001_047 + B01001_048 + B01001_049)/
+                            total_population)) |>
     select(GEOID, NAME, year, male_pct, median_age, white_pct, family_pct, bachelor_or_higher_pct,
            poverty_pct, disabled_pct, snap_pct, renter_pct, median_age,
-           median_income_individual, median_household_income, snap_recipient_hh_prior12)
+           median_income_individual, median_household_income, 
+           snap_recipient_hh_prior12, non_citizen_pct, over_65_pct)
            
   
   assign(paste0("snap_", year), census_wide, envir = .GlobalEnv)
