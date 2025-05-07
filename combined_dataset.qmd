@@ -577,10 +577,8 @@ snap_rec <-
               ),
               bbce_asset = factor(bbce_asset),
               abawdwaiver = factor(abawdwaiver)) |>
-  step_interact(terms = ~ poverty_pct:bbce_inclmt + median_household_income:bbce_inclmt) |> 
   step_normalize(all_numeric_predictors(), -c(snap_rate_acs, rural_urban_score, governor_is_democrat_1_yes, bbce)) |>
-  step_dummy(all_nominal_predictors()) |>
-  step_interact(terms = ~ unemployment_rate:starts_with("abawdwaiver"))
+  step_dummy(all_nominal_predictors())
 
 ```
 
