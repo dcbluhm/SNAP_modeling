@@ -600,7 +600,7 @@ ggplot(southern_state, aes(x = year, y = national_avg_rate)) +
 ```{r}
 
 snap_filtered <- snap_2model |>
-  filter(year <= 2019)
+filter(year >= 2017 & year <= 2019)
 
 state_extremes <- snap_filtered |>
   group_by(year, state_name) |>
@@ -634,7 +634,7 @@ print(combined_extremes)
 
 ```{r}
 zero_participation_list <- snap_2model |>
-  filter( year <= 2019, snap_participation_rate == 0) |>
+  filter(year >= 2017 & year <= 2019, snap_participation_rate == 0) |>
   select(year, NAME, state_name, snap_participation_rate) |>
   arrange(year, state_name, NAME)
 
@@ -643,12 +643,12 @@ print(zero_participation_list)
 ```
 
 
-### Summarize counties with participation rate \> 50%
+### Summarize counties with participation rate > 50%
 
 ```{r}
 
 over_50_summary <- snap_2model |>
-  filter(!is.na(snap_participation_rate), year <= 2019) |>
+  filter(!is.na(snap_participation_rate), year >= 2017 & year <= 2019 ) |>
   group_by(year) |>
   summarize(
     total_counties = n(),
@@ -667,7 +667,7 @@ From 2015 to 2019, the share of counties with SNAP participation rates above 50%
 
 # Summarize for Census South region (2015–2019)
 south_summary <- snap_2model |>
-  filter(state_name %in% south_states, year <= 2019) |>
+  filter(!is.na(snap_participation_rate), year >= 2017 & year <= 2019 ) |>
   group_by(year) |>
   summarize(
     avg_snap_rate = mean(snap_participation_rate, na.rm = TRUE),
@@ -718,7 +718,7 @@ south_states <- c(
 
 # Step 2: South summary
 south_summary <- snap_2model |>
-  filter(state_name %in% south_states, year <= 2019) |>
+  filter(state_name %in% south_states, year >= 2017 & year <= 2019) |>
   group_by(year) |>
   summarize(
     avg_snap_rate = mean(snap_participation_rate, na.rm = TRUE),
@@ -840,7 +840,7 @@ This bar chart shows a clear inverse relationship between median household incom
 ```{r}
 
 snap_white_summary <- snap_2model |>
-  filter(state_name %in% south_states, year <= 2019, !is.na(white_pct)) |>
+  filter(state_name %in% south_states, year >= 2017 & year <= 2019, !is.na(white_pct)) |>
   group_by(year) |>
   summarize(
     avg_white_pct = mean(white_pct, na.rm = TRUE),
@@ -854,10 +854,6 @@ print(snap_white_summary)
 ```
 
 ```{r}
-library(dplyr)
-library(tidyr)
-library(ggplot2)
-
 # Step 1: Summarize for South states by year
 snap_white_nonwhite_summary <- snap_2model |>
   filter(state_name %in% south_states, year <= 2019, !is.na(white_pct)) |>
@@ -920,7 +916,7 @@ print(zero_participation_south)
 ```{r}
 
 state_extremes_south <- snap_2model |>
-  filter(state_name %in% south_states, year <= 2019) |>
+  filter(state_name %in% south_states, year >= 2017 & year <= 2019) |>
   group_by(year, state_name) |>
   summarize(state_avg = mean(snap_participation_rate, na.rm = TRUE), .groups = "drop") |>
   group_by(year) |>
@@ -928,7 +924,7 @@ state_extremes_south <- snap_2model |>
   rename(highest_state = state_name, highest_rate = state_avg) |>
   full_join(
     snap_2model |>
-      filter(state_name %in% south_states, year <= 2019) |>
+      filter(state_name %in% south_states, year >= 2017 & year <= 2019) |>
       group_by(year, state_name) |>
       summarize(state_avg = mean(snap_participation_rate, na.rm = TRUE), .groups = "drop") |>
       group_by(year) |>
