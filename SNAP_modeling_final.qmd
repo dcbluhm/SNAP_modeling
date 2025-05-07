@@ -973,9 +973,7 @@ Differential error rates across different sectors of the population are crucial 
 The ten most important predictors in the model, measured by the absolute value of their coefficients in the elastic net regression, are displayed in the graph below. Seven out of the top ten are state dummy variables, with the top five all being state dummy variables. The remaining three are the percent of the population in poverty, the percent of the population that is white, and a dummy variable capturing whether or not the county's snap participation rate was imputed from ACS rather than pulled from the FNS data. Interestingly, none of the policy variables were found to have strong predictive power in this model. However, given the nature of the data, this is perhaps not surprising. The policy variables were all at the state level, so their predictive power may have been subsumed under the state dummy variables. Moreover, there was not a lot of variation in SNAP policies across states, which leads those variables to have less predictive power. If we had used a larger dataset (both in terms of years and the number of states), the policy predictors could have perhaps explained more of the variation.
 
 ```{r}
-lm_wf |>
-  finalize_workflow(lm_best) |>
-  fit(snap_2019) |>
+final_fit |>
   extract_fit_parsnip() |>
   vip(num_features = 10) +
   labs(x = "Predictor", y = "Importance", title = "Relative Importance of Predictors")
