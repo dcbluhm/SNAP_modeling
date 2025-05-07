@@ -51,8 +51,8 @@ rsconnect/
 # Data files
 data/
 
-# R project
-.Rproj
-
+# excel files
 *.xlsx
 
+# R data files
+*.rds

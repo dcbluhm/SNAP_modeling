@@ -544,7 +544,7 @@ snap_test <- snap_2model |>
   filter(year==2023)
 
 snap_train <- snap_2model |>
-  filter(year!=2023) |>
+  filter(year%in% c(2017, 2018, 2019)) |>
   arrange(year)
 
 snap_train |> group_by(year) |> summarize(n = n())
@@ -611,7 +611,7 @@ lm_res |>
 lm_best <- lm_res |>
   select_best(metric = "rmse")
 
-#saveRDS(lm_res, file = "lm_res.rds")
+saveRDS(lm_res, file = "lm_res.rds")
 
 lm_wf |>
   finalize_workflow(lm_best) |>
@@ -645,13 +645,21 @@ knn_res |>
 
 knn_res |>
   autoplot()
+
+knn_best <- knn_res |>
+  select_best(metric = "rmse")
+
+saveRDS(knn_res, file = "knn_res.rds")
+
 ```
 
 Random Forest
 
 ```{r}
+set.seed(05072025)
+
 rf_spec <- rand_forest(
-  trees = 500,
+  trees = 100,
   min_n = 5) |>
   set_mode("regression") |>
   set_engine("ranger")
@@ -666,11 +674,27 @@ rf_res <- rf_wf |>
 rf_res |>
   collect_metrics()
 
-rf_res |>
-  autoplot()
-
 ```
 
 ## Testing final model
+
+```{r}
+library(Metrics)
+
+final_fit <- lm_wf |>
+  finalize_workflow(parameters = lm_best) |>
+  fit(data = snap_2019)
+
+predictions <- bind_cols(
+  snap_test,
+  predict(object = final_fit, new_data = snap_test))
+
+select(predictions, snap_participation_rate, .pred)
+
+rmse(predictions$snap_participation_rate, predictions$.pred)
+
+summary(snap_test$snap_participation_rate)
+
+```
 
 ## Implementing model (fingers crossed)
