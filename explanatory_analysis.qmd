@@ -556,9 +556,13 @@ snap_train <- snap_2model |>
 
 ## Exploratory Data Analysis
 
+We explore the data to understand patterns and trends in Supplemental Nutrition Assistance Program (SNAP) participation across U.S. counties. The combined dataset covers administrative records from 2015 to 2019 and 2023, integrating county-level SNAP household participation data with demographic and socioeconomic indicators, including variables from the American Community Survey (ACS). This exploratory analysis examines temporal and geographic variation in participation, evaluates data quality and distributions, and identifies potential associations between SNAP participation rates and key covariates such as poverty levels, unemployment rates, and household characteristics.
+
+
+### National Average SNAP Participation Rate by Year to 2019
 ```{r}
 national_avg <- snap_2model |>
-  filter(year <= 2019) |>  # <-- Filter data up to 2019
+  filter(year <= 2019) |>  
   group_by(year) |>
   summarize(national_avg_rate = mean(snap_participation_rate, na.rm = TRUE))
 
@@ -572,7 +576,11 @@ ggplot(national_avg, aes(x = year, y = national_avg_rate)) +
   theme_minimal()
 
 ```
+The figure displays the national average SNAP participation rate across all counties from 2015 to 2019. The chart reveals a consistent downward trend in the average rate, beginning at approximately 18.6% in 2015 and declining to just above 16.2% by 2019. The decrease appears steady, with the most pronounced drop occurring between 2016 and 2017. 
 
+
+
+### 2019 county-level map of SNAP participation rates
 
 ```{r}
 library(ggplot2)
@@ -588,14 +596,17 @@ snap_map |>
   theme(legend.position = "bottom")
 
 ```
+The map shows county-level SNAP participation rates for 2019. Darker areas indicate higher rates, revealing clear geographic variation. Higher participation is concentrated in parts of the South and Southwest, while lower rates appear in much of the Midwest and Mountain West. This highlights regional disparities in program uptake.
 
 
-
-### Find highest and lowest participation states per year
+### Extreme (highest and lowest participation) states and counties per year
 
 ```{r}
-# Get highest and lowest states
-state_extremes <- snap_2model |>
+
+snap_filtered <- snap_2model |>
+  filter(year <= 2019)
+
+state_extremes <- snap_filtered |>
   group_by(year, state_name) |>
   summarize(state_avg = mean(snap_participation_rate, na.rm = TRUE), .groups = "drop") |>
   group_by(year) |>
@@ -606,8 +617,7 @@ state_extremes <- snap_2model |>
     lowest_state_rate = min(state_avg, na.rm = TRUE)
   )
 
-# Get highest and lowest counties
-county_extremes <- snap_2model |>
+county_extremes <- snap_filtered |>
   group_by(year, NAME) |>
   summarize(county_avg = mean(snap_participation_rate, na.rm = TRUE), .groups = "drop") |>
   group_by(year) |>
@@ -618,16 +628,18 @@ county_extremes <- snap_2model |>
     lowest_county_rate = min(county_avg, na.rm = TRUE)
   )
 
-# Combine both into one table
 combined_extremes <- left_join(state_extremes, county_extremes, by = "year")
 
 print(combined_extremes)
 
 ```
+At the county level, SNAP participation rates varied widely. Owsley County, Kentucky and Perry County, Alabama repeatedly appeared among those with the highest rates, exceeding 70% in some years. In contrast, counties like Ellis County, Oklahoma, Alexander County, Illinois, and Brooke County, West Virginia recorded the lowest rates, with values of 0%. These results highlight pronounced local disparities in program participation, even within states.
 
+
+### Summary of counties with 0% participation rate
 ```{r}
 zero_participation_list <- snap_2model |>
-  filter(snap_participation_rate == 0) |>
+  filter( year <= 2019, snap_participation_rate == 0) |>
   select(year, NAME, state_name, snap_participation_rate) |>
   arrange(year, state_name, NAME)
 
@@ -635,12 +647,13 @@ print(zero_participation_list)
 
 ```
 
+Several counties across multiple states reported a SNAP participation rate of zero in specific years between 2015 and 2019. These include repeated cases in Illinois (e.g., Alexander, Carroll, Clinton), Oklahoma (e.g., Ellis, Love, Cimarron), Montana (Prairie County), and others. 
 
+### Summarize counties with participation rate > 50%
 ```{r}
 
-# Summarize counties with participation rate > 50%
 over_50_summary <- snap_2model |>
-  filter(!is.na(snap_participation_rate)) |>
+  filter(!is.na(snap_participation_rate), year <= 2019) |>
   group_by(year) |>
   summarize(
     total_counties = n(),
@@ -652,7 +665,10 @@ over_50_summary <- snap_2model |>
 print(over_50_summary)
 
 ```
+From 2015 to 2019, the share of counties with SNAP participation rates above 50% declined steadily from 1.53% (35 counties) to 0.54% (13 counties), indicating a shrinking number of high-participation counties over time.
 
+
+### SNAP Participation by Median Household Income Bracket
 ```{r}
 snap_income_brackets <- snap_2model |>
   filter(!is.na(median_household_income)) |>
@@ -679,6 +695,8 @@ snap_income_brackets <- snap_2model |>
 print(snap_income_brackets)
 
 ```
+Counties with lower median household incomes had significantly higher average SNAP participation rates, with counties under $30k showing the highest average rate (40.8%), and participation decreasing steadily as income rises.
+
 
 ```{r}
 
@@ -698,12 +716,11 @@ print(snap_summary_by_year)
 
 ```
 
-
-
+summary of zero participation counties by year
 ```{r}
 
 zero_participation_summary <- snap_2model |>
-  filter(snap_participation_rate == 0) |>
+  filter(snap_participation_rate == 0, year <= 2019) |>
   group_by(year) |>
   summarize(num_counties_zero_rate = n(), .groups = "drop")
 
@@ -712,18 +729,17 @@ print(zero_participation_summary)
 ```
 
 
-
 ```{r}
-# Step 1: Calculate national average per year
+# Calculate national average per year
 national_avg <- snap_2model |>
   group_by(year) |>
   summarize(national_avg_rate = mean(snap_participation_rate, na.rm = TRUE), .groups = "drop")
 
-# Step 2: Join the national average back to the dataset
+# Join the national average back to the dataset
 snap_with_avg <- snap_2model |>
   left_join(national_avg, by = "year")
 
-# Step 3: Count total counties and those above the average
+# Count total counties and those above the average
 above_avg_summary <- snap_with_avg |>
   group_by(year) |>
   summarize(
@@ -804,6 +820,29 @@ ggplot(snap_2model, aes(x = factor(rural_urban_score), y = snap_participation_ra
 
 ```
 
+
+```{r}
+# Correlation test
+cor_result <- cor.test(
+  snap_2model$bachelor_or_higher_pct,
+  snap_2model$snap_participation_rate,
+  use = "complete.obs"
+)
+
+print(cor_result)
+
+# Scatterplot with linear trend
+ggplot(snap_2model, aes(x = bachelor_or_higher_pct, y = snap_participation_rate)) +
+  geom_point(alpha = 0.4) +
+  geom_smooth(method = "lm", se = FALSE, color = "darkblue") +
+  labs(
+    title = "SNAP Participation vs % with Bachelor's Degree or Higher",
+    subtitle = paste("Correlation:", round(cor_result$estimate, 2)),
+    x = "% Bachelor's Degree or Higher",
+    y = "SNAP Participation Rate"
+  ) +
+  theme_minimal()
+```
 
 ```{r}
 library(ggplot2)
