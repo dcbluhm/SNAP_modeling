@@ -715,7 +715,7 @@ rf_res |>
 
 ```
 
-### Testing Final Model
+## Testing Final Model
 
 ```{r}
 
@@ -735,10 +735,84 @@ summary(snap_test$snap_participation_rate)
 
 ```
 
-## Implementing Final Model
-
 # Discussion of Results
 
-# Bibliography
+When implemented on the testing data, the RMSE was 6.46 percentage points, which is over twice the average RMSE of the best model during cross-validation. Compared to the average SNAP participation rate across sampled counties in 2023 of 18.26%, this is a very high error rate, about 35.38%. Given the magnitude of the RMSE, we would not recommend the implementation of this model for making real-world predictions. The error rate also varied across states and across different levels of urbanicity and racial make-up. The first bar graph below shows the error rates by state, which vary dramatically. Texas has by far the highest RMSE at nearly 15 percentage points, and Washington D.C. has the lowest. State size appears to be a factor contributing to this; states with fewer counties seem to have lower error rates than states with many counties (D.C. only has one, while Texas has 254). 
 
+```{r}
+predictions |> 
+  mutate(state_name = case_when(state_fips == "01" ~ "Alabama",
+                                state_fips == "05" ~ "Arkansas",
+                                state_fips == "10" ~ "Delaware",
+                                state_fips == "11" ~ "District of Columbia", 
+                                state_fips == "12" ~ "Florida", 
+                                state_fips == "13" ~ "Georgia", 
+                                state_fips == "21" ~ "Kentucky",
+                                state_fips == "22" ~ "Louisiana",
+                                state_fips == "24" ~ "Maryland", 
+                                state_fips == "28" ~ "Mississippi",
+                                state_fips == "37" ~ "North Carolina", 
+                                state_fips == "40" ~ "Oklahoma", 
+                                state_fips == "45" ~ "South Carolina",
+                                state_fips == "47" ~ "Tennessee", 
+                                state_fips == "48" ~ "Texas", 
+                                state_fips == "51" ~ "Virginia", 
+                                state_fips == "54" ~ "West Virginia")) |>
+  group_by(state_fips) |>
+  mutate(state_rmse = rmse(snap_participation_rate, .pred)) |>
+  ggplot() +
+  geom_col(mapping = aes(x = state_name, y = state_rmse)) +
+  theme(axis.text.x = element_text(angle = 45, vjust = .85)) + 
+  labs(x = "State", y = "RMSE", title = "RMSE by State")
+
+```
+
+The second bar graph shows error rates by urbanicity (with 1 being most urban and 9 being the most rural). It appears that counties at either end of the urban/rural spectrum had the highest RMSE, while counties in the middle had the lowest.
+
+```{r}
+predictions |> 
+  group_by(rural_urban_score) |>
+  mutate(rural_urban_rmse = rmse(snap_participation_rate, .pred)) |>
+  ggplot() +
+  geom_col(mapping = aes(x = rural_urban_score, y = rural_urban_rmse)) +
+  theme(axis.text.x = element_text(angle = 45, vjust = .85)) + 
+  labs(x = "Urban-Rural Score", y = "RMSE", title = "RMSE by Urbanicity")
+
+```
+
+The scatter plot and regression line below display the relationship between absolute error and county racial make-up. Counties with a higher non-white proportion of the population had slightly higher error rates.
+
+```{r}
+predictions |>
+  mutate(abs_error = abs(.pred - snap_participation_rate)) |>
+  ggplot(mapping = aes(x = white_pct, y = abs_error)) + 
+  geom_point() +
+  stat_smooth(method = "lm", 
+              formula = y ~ x, 
+              geom = "smooth") +
+  labs(x = "Proportion of the Population that is White", y = "Error", title = "Error by County Racial Demographics")
+
+```
+
+Differential error rates across different sectors of the population are crucial for researchers policymakers to consider when evaluating a model, as they may have ramifications on equity if policy decisions are made using the outputs of the model.
+
+## Limitations
+The primary limitations of this project were time and computing power. Only having access to our personal laptops, we were not able to use samples as large or models as complex as we would have preferred. This likely contributed to the magnitude of the error rate, and potentially to the differential error rates, as we did not have sample sizes large enough to make accurate predictions for certain subsets of the population.
+
+# Bibliography
+Creamer, J., & King, M. D. (2024, November 14). New interactive data tool shows how programs and expenses affect poverty measurement. U.S. Census Bureau. https://www.census.gov/library/stories/2024/11/supplemental-poverty-measure-visualization.html
+
+Dickert-Conlin, S., Fitzpatrick, K., Stacy, B., & Tiehen, L. (2021). The downs and ups of the SNAP caseload: What matters? Applied Economic Perspectives and Policy, 43(3), 1026–1050. 
+
+Han, J. (2016). The impact of SNAP on material hardships: Evidence from broad-based categorical eligibility expansions. Southern Economic Journal, 83(2), 464–486.
+
+Jones, J., Courtemanche, C., Denteh, A., Marton, J., & Tchernis, R. (2021). Do state SNAP policies influence program participation among seniors? IZA Discussion Paper Series, No. 14564. Institute of Labor Economics (IZA). 
+
+Pinard, C. A., Bertmann, F. M. W., Byker Shanks, C., Scharadin, B., & Yaroch, A. L. (2017). What factors influence SNAP participation? Literature reflecting enrollment in food assistance programs from a social and behavioral science perspective. Journal of Hunger & Environmental Nutrition, 12(2), 151–168.
+
+Rothbaum, J., Fox, L., & Shantz, K. (2021, October). Fixing errors in a SNAP: Addressing SNAP under-reporting to evaluate poverty. U.S. Census Bureau.
+
+U.S. Department of Agriculture, Food and Nutrition Service. (n.d.a). Broad-based categorical eligibility. https://www.fns.usda.gov/snap/broad-based-categorical-eligibility
+
+U.S. Department of Agriculture, Food and Nutrition Service. (n.d.b). ABAWD Waivers. https://www.fns.usda.gov/snap/abawd/waivers
 
