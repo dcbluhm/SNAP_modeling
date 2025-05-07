@@ -550,11 +550,15 @@ snap_train <- snap_2model |>
 
 ```
 
+
+
+
+
 ## Exploratory Data Analysis
 
 ```{r}
-national_avg <- snap_2model %>%
-  group_by(year) %>%
+national_avg <- snap_2model |>
+  group_by(year) |>
   summarize(national_avg_rate = mean(snap_participation_rate, na.rm = TRUE))
 
 
@@ -569,10 +573,137 @@ national_avg <- snap_2model %>%
 
 
 ```
+
 ```{r}
+# Find highest and lowest participation states per year
+state_extremes <- snap_2model |>
+  group_by(year, state_name) |>
+  summarize(state_avg = mean(snap_participation_rate, na.rm = TRUE), .groups = "drop") |>
+  group_by(year) |>
+  slice_max(order_by = state_avg, n = 1, with_ties = FALSE) |>
+  rename(highest_state = state_name, highest_rate = state_avg) |>
+  full_join(
+    snap_2model |>
+      group_by(year, state_name) |>
+      summarize(state_avg = mean(snap_participation_rate, na.rm = TRUE), .groups = "drop") |>
+      group_by(year) |>
+      slice_min(order_by = state_avg, n = 1, with_ties = FALSE) |>
+      rename(lowest_state = state_name, lowest_rate = state_avg),
+    by = "year"
+  )
+print(state_extremes)
 
 
 ```
+
+```{r}
+library(tidyverse)
+
+snap_2model %>%
+  select(snap_participation_rate, poverty_pct, renter_pct, unemployment_rate, over_65_pct) %>%
+  pivot_longer(cols = c(poverty_pct, renter_pct, unemployment_rate, over_65_pct),
+               names_to = "predictor", values_to = "value") %>%
+  ggplot(aes(x = value, y = snap_participation_rate)) +
+  geom_point(alpha = 0.3) +
+  geom_smooth(method = "lm", color = "blue") +
+  facet_wrap(~ predictor, scales = "free_x") +
+  labs(title = "Predictor Variables vs SNAP Participation Rate",
+       x = "Predictor Value", y = "SNAP Participation Rate") +
+  theme_minimal()
+
+```
+
+
+
+
+```{r}
+library(tidyverse)
+
+# Z-score standardize selected predictors
+plot_df <- snap_2model |>
+  mutate(across(c(poverty_pct, renter_pct, unemployment_rate, over_65_pct), scale)) |>
+  select(snap_participation_rate, poverty_pct, renter_pct, unemployment_rate, over_65_pct) |>
+  pivot_longer(cols = -snap_participation_rate, names_to = "predictor", values_to = "value")
+
+# Improved scatterplot
+ggplot(plot_df, aes(x = value, y = snap_participation_rate)) +
+  geom_point(alpha = 0.15, color = "gray", size = 0.8) +
+  geom_smooth(method = "lm", color = "blue", se = FALSE, linewidth = 1) +
+  facet_wrap(~ predictor, scales = "free_x",
+             labeller = as_labeller(c(
+               poverty_pct = "Poverty (%)",
+               renter_pct = "Renter Share (%)",
+               unemployment_rate = "Unemployment (%)",
+               over_65_pct = "Population Over 65 (%)"
+             ))) +
+  labs(
+    title = "Standardized Predictors vs SNAP Participation Rate",
+    x = "Standardized Value (Z-Score)",
+    y = "SNAP Participation Rate"
+  ) +
+  theme_minimal(base_size = 13)
+
+
+```
+
+
+
+```{r}
+library(ggplot2)
+
+snap_map %>%
+  filter(year == 2019) %>%
+  ggplot() +
+  geom_sf(aes(fill = snap_participation_rate), color = NA) +
+  scale_fill_gradient(low = "#cfe8f3", high = "#062635", na.value = "grey90") +
+  labs(title = "SNAP Participation Rate by County (2019)",
+       fill = "Participation Rate") +
+  theme_void() +
+  theme(legend.position = "bottom")
+
+```
+
+
+```{r}
+ggplot(snap_2model, aes(x = factor(rural_urban_score), y = snap_participation_rate)) +
+  geom_boxplot(fill = "lightblue") +
+  labs(title = "Urban-Rural Code vs SNAP Participation", x = "RUCC Code (1 = Urban, 9 = Most Rural)", y = "SNAP Participation Rate") +
+  theme_minimal()
+
+```
+
+
+```{r}
+library(ggplot2)
+
+snap_2model |>
+  select(poverty_pct, median_household_income, disabled_pct, rural_urban_score) |>
+  pivot_longer(cols = everything(), names_to = "variable", values_to = "value") |>
+  ggplot(aes(x = value)) +
+  geom_histogram(bins = 30, fill = "skyblue", color = "black") +
+  facet_wrap(~ variable, scales = "free") +
+  labs(title = "Distributions of Key Variables", x = "Value", y = "Count") +
+  theme_minimal()
+
+```
+
+
+
+
+
+```{r}
+ggplot(snap_2model, aes(x = disabled_pct, y = snap_participation_rate)) +
+  geom_point(alpha = 0.2) +
+  geom_smooth(method = "lm", color = "steelblue") +
+  labs(
+    title = "Disability Rate vs SNAP Participation Rate",
+    x = "Share of County Population with Disability",
+    y = "SNAP Participation Rate"
+  ) +
+  theme_minimal()
+
+```
+
 
 ## Training models
 
