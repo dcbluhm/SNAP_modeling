@@ -544,7 +544,7 @@ combined_poldb <- poldb |>
 
 ```
 
-# Data Wrangling and Expoloratory Data Analysis
+# Data Wrangling and Exploratory Data Analysis
 
 ## Merging datasets
 
@@ -592,6 +592,159 @@ snap_train |> group_by(year) |> summarize(n = n())
 ```
 
 ## Exploratory Data Analysis
+
+We begin by simply examining average county SNAP participation rates by year and by state (for 2019) within the training dataset.
+
+```{r}
+snap_train |>
+  group_by(year) |>
+  summarize(year_avg_rate = mean(snap_participation_rate, na.rm = TRUE), .groups = "drop") |>
+  ggplot(aes(x = year, y = year_avg_rate)) +
+  geom_line(size = 1.2, color = "darkblue") +
+  geom_point(color = "darkred") +
+  labs(
+    title = "Southern State Average SNAP Participation Rate by Year (2017–2019)",
+    x = "Year", y = "Average Participation Rate"
+  ) +
+  scale_x_continuous(breaks = 2017:2019) +
+  theme_minimal()
+
+```
+
+Average county SNAP participation rates decreased slightly from 2017 to 2019, from about 21.5% to about 19%. Note that these are averages of county rates, not the overall rate for all counties, so they weight each county equally.
+
+```{r}
+snap_train |>
+  mutate(state_name = case_when(state_fips == "01" ~ "Alabama",
+                                state_fips == "05" ~ "Arkansas",
+                                state_fips == "10" ~ "Delaware",
+                                state_fips == "11" ~ "District of Columbia", 
+                                state_fips == "12" ~ "Florida", 
+                                state_fips == "13" ~ "Georgia", 
+                                state_fips == "21" ~ "Kentucky",
+                                state_fips == "22" ~ "Louisiana",
+                                state_fips == "24" ~ "Maryland", 
+                                state_fips == "28" ~ "Mississippi",
+                                state_fips == "37" ~ "North Carolina", 
+                                state_fips == "40" ~ "Oklahoma", 
+                                state_fips == "45" ~ "South Carolina",
+                                state_fips == "47" ~ "Tennessee", 
+                                state_fips == "48" ~ "Texas", 
+                                state_fips == "51" ~ "Virginia", 
+                                state_fips == "54" ~ "West Virginia")) |> 
+  filter(year == 2019) |>
+  group_by(state_name) |>
+  summarize(state_avg_rate = mean(snap_participation_rate, na.rm = TRUE), .groups = "drop") |>
+  ggplot(aes(x = state_name, y = state_avg_rate)) +
+  geom_col() +
+  labs(
+    title = "Average SNAP Participation Rate by State 2019",
+    x = "", y = "Average Participation Rate"
+  ) +
+  theme(axis.text.x = element_text(angle = 45, vjust = .75))
+
+```
+Average SNAP participation rates vary significantly across states, ranging from Virginia at just below 15%, to its neighbor West Virginia at nearly 25%.
+
+
+SNAP participation rates by median income and poverty rate.
+
+```{r}
+snap_train |> filter(year == 2019) |>
+  ggplot(mapping = aes(x = median_household_income, y = snap_participation_rate)) + 
+  geom_point(alpha = 0.25) +
+  stat_smooth(method = "lm", 
+              formula = y ~ x, 
+              geom = "smooth") +
+  labs(x = "Median Household Income", y = "SNAP Participation Rate", title = "SNAP Participation Rate by Household Income 2019") +
+  theme_minimal()
+
+snap_train |> filter(year == 2019) |>
+  ggplot(mapping = aes(x = poverty_pct, y = snap_participation_rate)) + 
+  geom_point(alpha = 0.25) +
+  stat_smooth(method = "lm", 
+              formula = y ~ x, 
+              geom = "smooth") +
+  labs(x = "Poverty Rate", y = "SNAP Participation Rate", title = "SNAP Participation Rate by Poverty Rate 2019") +
+  theme_minimal()
+
+snap_train |> filter(year == 2019) |>
+  ggplot(mapping = aes(x = white_pct, y = snap_participation_rate)) + 
+  geom_point(alpha = 0.25) +
+  stat_smooth(method = "lm", 
+              formula = y ~ x, 
+              geom = "smooth") +
+  labs(x = "Percentage White", y = "SNAP Participation Rate", title = "SNAP Participation Rate by County Racial Demographics 2019") +
+  theme_minimal()
+
+snap_train |> filter(year == 2019) |>
+  ggplot(mapping = aes(x = unemployment_rate, y = snap_participation_rate)) + 
+  geom_point(alpha = 0.25) +
+  stat_smooth(method = "lm", 
+              formula = y ~ x, 
+              geom = "smooth") +
+  labs(x = "Unemployment Rate", y = "SNAP Participation Rate", title = "SNAP Participation Rate by Unemployment Rate 2019") +
+  theme_minimal()
+
+snap_train |> filter(year == 2019) |>
+  mutate(rural_urban_score = factor(rural_urban_score)) |>
+  group_by(rural_urban_score) |>
+  summarize(urban_avg_rate = mean(snap_participation_rate, na.rm = TRUE), .groups = "drop") |>
+  ggplot(aes(x = rural_urban_score, y = urban_avg_rate)) +
+  geom_col() +
+  labs(
+    title = "Average SNAP Participation Rate by Urbanicity",
+    x = "Urban-Rural Score", y = "Average Participation Rate"
+  ) +
+  theme_minimal()
+
+```
+
+Policy Variables
+
+```{r}
+snap_train |> filter(year == 2019) |>
+  group_by(bbce) |>
+  mutate(bbce = if_else(bbce == 0, "No", "Yes")) |>
+  summarize(bbce_avg_rate = mean(snap_participation_rate, na.rm = TRUE), .groups = "drop") |>
+  ggplot(aes(x = bbce, y = bbce_avg_rate)) +
+  geom_col() +
+  labs(
+    title = "Average SNAP Participation Rate by BBCE Participation",
+    x = "BBCE", y = "Average Participation Rate"
+  ) +
+  theme_minimal()
+
+snap_train |> filter(year == 2019) |>
+  mutate(bbce_inclmt = if_else(bbce_inclmt == -9, 130, bbce_inclmt),
+        bbce_inclmt = factor(bbce_inclmt)) |>
+  group_by(bbce_inclmt) |>
+  summarize(inclt_avg_rate = mean(snap_participation_rate, na.rm = TRUE), .groups = "drop") |>
+  ggplot(aes(x = bbce_inclmt, y = inclt_avg_rate)) +
+  geom_col() +
+  labs(
+    title = "Average SNAP Participation Rate by Income Limit",
+    x = "SNAP Income Limit as Percent of Federal Poverty Line", y = "Average Participation Rate"
+  ) +
+  theme_minimal()
+
+snap_train |> filter(year == 2019) |>
+  mutate(abawdwaiver= case_when(
+    abawdwaiver == 0 ~ "No waivers",
+    abawdwaiver == 1 ~ "Waivers for Part of State",
+    abawdwaiver == 2 ~ "Waivers for Entire State"
+  )) |>
+  group_by(abawdwaiver) |>
+  summarize(waiver_avg_rate = mean(snap_participation_rate, na.rm = TRUE), .groups = "drop") |>
+  ggplot(aes(x = abawdwaiver, y = waiver_avg_rate)) +
+  geom_col() +
+  labs(
+    title = "Average SNAP Participation Rate by Waiver Status",
+    x = "ABAWD Time Limit Waivers", y = "Average Participation Rate"
+  ) +
+  theme_minimal()
+
+```
 
 # Data Analysis
 
