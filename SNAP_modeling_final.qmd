@@ -1,5 +1,5 @@
 ---
-title: "SNAP Policy Analysis"
+title: "Predicting Household SNAP Participation Rates by County in the Census South Region"
 subtitle: "Data Science for Public Policy Final Project"
 author: "Caroline Atuhaire, David Bluhm, Johnny Willing"
 execute:
@@ -36,6 +36,7 @@ library(ggplot2)
 library(ranger)
 library(tidymodels)
 library(Metrics)
+library(vip)
 
 # Silence messages from tidycensus
 options(tidycensus.quiet = TRUE)
@@ -44,7 +45,7 @@ options(tidycensus.quiet = TRUE)
 
 ## SNAP Participation Rates
 
-The numerator is taken from SNAP data tables published by the Food and Nutrition Service, specifically the Bi-Annual State Project Area/County Level Participation and Issuance Data published in a .zip file at this url: <https://www.fns.usda.gov/pd/supplemental-nutrition-assistance-program-snap>. The .zip file contains a set of excel files with counts of individuals and households participating in SNAP by county in January and July for each year from 1984 to 2023. We use a subset of those years, 2015-2019 and 2023. We choose to skip 2020-2022 because of the dramatically altered economic and policy environment during the COVID-19 pandemic which would likely make data from those years less applicable to other years. From this data, we take the average of the counts of households participating in SNAP in January and July, the two times of year this data is updated. A subset of counties are missing from the FNS dataset, so for those counties, we substitute data from the American Community Survey (ACS) 5-year estimates; table B22001 includes a variable for the number of households receiving SNAP benefits.
+The numerator is taken from SNAP data tables published by the Food and Nutrition Service, specifically the Bi-Annual State Project Area/County Level Participation and Issuance Data published in a .zip file at this url: <https://www.fns.usda.gov/pd/supplemental-nutrition-assistance-program-snap>. The .zip file contains a set of excel files with counts of individuals and households participating in SNAP by county in January and July for each year from 1984 to 2023. We use a subset of those years, 2017-2019 and 2023. We choose to skip 2020-2022 because of the dramatically altered economic and policy environment during the COVID-19 pandemic which would likely make data from those years less applicable to other years. From this data, we take the average of the counts of households participating in SNAP in January and July, the two times of year this data is updated. A subset of counties are missing from the FNS dataset, so for those counties, we substitute data from the American Community Survey (ACS) 5-year estimates; table B22001 includes a variable for the number of households receiving SNAP benefits.
 
 We take the denominator of the SNAP participation rate from the ACS B22001 table as well, as it also contains the total number of households by county. For the counties missing from the FNS dataset, we inflate the ACS data for each county since SNAP participation rates are often significantly underreported in household surveys such as the ACS [(Rothbaum et al, 2021)](https://www.census.gov/content/dam/Census/newsroom/press-kits/2022/assa/assa-jan2022-paper-fixing%20errors-in-a-snap.pdf). We calculate the inflation factor at the state level, taking the average number of households receiving SNAP benefits in each state year from another FNS dataset (the .zip file under “National and/or State Level Monthly and/or Annual Data” from the url above) and dividing it by the number of households reported as receiving SNAP benefits in each state year in the ACS. For each county whose count of SNAP households came from the ACS rather than FNS, we multiply the household SNAP participation rate by the inflation factor to achieve a more accurate estimate.
 
@@ -234,7 +235,8 @@ snap_map |>
   ggplot() +
   geom_sf(mapping = aes(fill = snap_participation_rate)) +
   scale_fill_gradient(low = "#cfe8f3", high = "#062635") +
-  theme_void()
+  theme_void() +
+  labs(title = "Household SNAP Participation by County in the Contiguous 48 States")
 
 ```
 
@@ -495,10 +497,10 @@ demographic_combined <- demographic_combined |>
 ## SNAP Policy Predictors
 
 We include four variables covering state-level policies governing SNAP eligibility, three of which were constructed from the FNS’s SNAP Policy Database (available here: <https://www.ers.usda.gov/data-products/snap-policy-data-sets>) and one of which was entered manually. Specifically, our data contains: 
-* A binary variable indicating whether a state implemented BBCE in a given year, taken directly from the SNAP Policy Database for 2015-2019. For 2023, this information was collected from FNS’s BBCE site (accessed for 2023 via the Wayback Machine here: <https://web.archive.org/web/20230331232320/https://www.fns.usda.gov/snap/broad-based-categorical-eligibility>).
-* A continuous variable that measures the state’s income limit for SNAP recipients as a percentage of the federal poverty line. For states that implement BBCE, the SNAP Policy Database contains this information for 2015-2019, with non-BBCE states coded as missing. We coded non-BBCE states’ as 130, because 130% is the default income limit for SNAP eligibility. For 2023, this information was collected from the FNS BBCE site linked above.
-* A categorical variable that equals 0 if states have the default federal asset limit for SNAP eligibility ($2,250 for most of the years in the sample), 1 if states have increased the asset limit via BBCE, and 2 if states have eliminated the asset limit entirely. This variable was constructed from the SNAP Policy Database for 2015-2019. For 2023, this information was collected from the FNS BBCE site linked above.
-* A categorical variable that equals 0 for states that have not waived the ABAWD work requirement time limit, 1 for states that have waived the time limit for part of the state, and 2 for states that have waived the time limit throughout the entire state. For 2015-2019, this data was collected by visually inspecting a map published by the Center on Budget and Policy Priorities showing areas covered by ABAWD time limit waivers for all 50 states (available here: <https://www.cbpp.org/research/states-have-requested-waivers-from-snaps-time-limit-in-high-unemployment-areas-for-the-past>). For DC, 2015-2019 ABAWD time limit waiver data was collected directly from FNS (available here: <https://www.fns.usda.gov/snap/abawd/waivers/2015-2019>). For 2023, this information was collected from the 2023 State Options Report (<https://fns-prod.azureedge.us/sites/default/files/resource-files/snap-15th-state-options-report-october23.pdf>).
+*  A binary variable indicating whether a state implemented BBCE in a given year, taken directly from the SNAP Policy Database for 2015-2019. For 2023, this information was collected from FNS’s BBCE site (accessed for 2023 via the Wayback Machine here: <https://web.archive.org/web/20230331232320/https://www.fns.usda.gov/snap/broad-based-categorical-eligibility>).
+*  A continuous variable that measures the state’s income limit for SNAP recipients as a percentage of the federal poverty line. For states that implement BBCE, the SNAP Policy Database contains this information for 2015-2019, with non-BBCE states coded as missing. We coded non-BBCE states’ as 130, because 130% is the default income limit for SNAP eligibility. For 2023, this information was collected from the FNS BBCE site linked above.
+*  A categorical variable that equals 0 if states have the default federal asset limit for SNAP eligibility ($2,250 for most of the years in the sample), 1 if states have increased the asset limit via BBCE, and 2 if states have eliminated the asset limit entirely. This variable was constructed from the SNAP Policy Database for 2015-2019. For 2023, this information was collected from the FNS BBCE site linked above.
+*  A categorical variable that equals 0 for states that have not waived the ABAWD work requirement time limit, 1 for states that have waived the time limit for part of the state, and 2 for states that have waived the time limit throughout the entire state. For 2015-2019, this data was collected by visually inspecting a map published by the Center on Budget and Policy Priorities showing areas covered by ABAWD time limit waivers for all 50 states (available here: <https://www.cbpp.org/research/states-have-requested-waivers-from-snaps-time-limit-in-high-unemployment-areas-for-the-past>). For DC, 2015-2019 ABAWD time limit waiver data was collected directly from FNS (available here: <https://www.fns.usda.gov/snap/abawd/waivers/2015-2019>). For 2023, this information was collected from the 2023 State Options Report (<https://fns-prod.azureedge.us/sites/default/files/resource-files/snap-15th-state-options-report-october23.pdf>).
 
 ```{r}
 
@@ -557,6 +559,7 @@ snap_2model <- snap_participation |>
   select(-c(median_income_individual, state_name, NAME, snap_recipient_hh_prior12, snap_pct)) |>
   drop_na()
 
+# Exclude counties that don't have data for all years
 county_observations <- snap_2model |>
   group_by(GEOID) |>
   summarize(num_obs = n()) |>
@@ -574,6 +577,7 @@ rm(abawd_waivers, acs_inflators, acs_snap_county, acs_snap_county_infl, acs_stat
 ```
 
 ## Split up testing and training
+We are building our predictive model using data from years 2017-2019 and 2023, training on 2017-2019 and testing on 2023. We do not use the years 2020-2022, as the COVID-19 pandemic dramatically altered the policy and economic landscape which could undermine the training of our model. We begin by splitting the data into training and testing sets, and then conducting exploratory data analysis.
 
 ```{r}
 snap_test <- snap_2model |>
@@ -595,6 +599,8 @@ snap_train |> group_by(year) |> summarize(n = n())
 
 ### Creating folds and a recipe
 
+Now that we have explored our training data set, we will begin training our models. The first step is setting up resamples: for the three training years, we have two resamples: the first trains on 2017 and tests on 2018, and the second trains on 2018 and tests on 2019. The final fit will ultimately be tested on 2019, the closest year to our testing year.
+
 ```{r}
 
 # set up folds
@@ -602,7 +608,11 @@ snap_folds <- rolling_origin(snap_train, initial = 1420, assess = 1420, cumulati
 
 snap_2019 <- snap_train |>
   filter(year==2019)
+```
 
+We then pre-process our data. We remove predictors with zero variance, update the BBCE-related variables as described in the data sources section above, convert all nominal predictors into dummy variables, and normalize all numeric predictors.
+
+```{r}
 # create recipe
 snap_rec <- 
   recipe(formula = snap_participation_rate ~ ., data = snap_train) |>
@@ -623,6 +633,8 @@ snap_rec <-
 
 ### Linear Regression Elastic Net
 
+Our first model to test is an elastic net. We tune the penalty hyperparameter to find the value that minimizes RMSE.
+
 ```{r}
 lm_spec <- linear_reg(penalty = tune(),
                       mixture = .5) |>
@@ -641,23 +653,16 @@ lm_res <- lm_wf |>
             metrics = metric_set(yardstick::rmse, yardstick::mae))
 
 lm_res |>
-  collect_metrics() #|>
+  collect_metrics()
 
 lm_res |>
   autoplot()
 
-lm_best <- lm_res |>
-  select_best(metric = "rmse")
-
-lm_wf |>
-  finalize_workflow(lm_best) |>
-  fit(snap_2019) |>
-  extract_fit_parsnip() |>
-  tidy()
-
 ```
 
 ### K-Nearest Neighbor
+
+Our next model is K-Nearest Neighbors. Here, we tune the model to select the number of neighbors that minimizes RMSE.
 
 ```{r}
 knn_spec <- nearest_neighbor(neighbors = tune()) |>
@@ -685,11 +690,11 @@ knn_res |>
 knn_best <- knn_res |>
   select_best(metric = "rmse")
 
-saveRDS(knn_res, file = "knn_res.rds")
-
 ```
 
 ### Random Forest
+
+Our final model is a random forest.
 
 ```{r}
 set.seed(05072025)
@@ -714,10 +719,15 @@ rf_res |>
 
 ## Testing Final Model
 
+The K-Nearest Neighbors model with three neighbors was the best performing model, with an RMSE of about 3.3 percentage points. So we move forward and fit that model on data from 2019 and test it on 2023.
+
 ```{r}
 
-final_fit <- lm_wf |>
-  finalize_workflow(parameters = lm_best) |>
+knn_best <- knn_res |>
+  select_best(metric = "rmse")
+
+final_fit <- knn_wf |>
+  finalize_workflow(parameters = knn_best) |>
   fit(data = snap_2019)
 
 predictions <- bind_cols(
@@ -734,7 +744,9 @@ summary(snap_test$snap_participation_rate)
 
 # Discussion of Results
 
-When implemented on the testing data, the RMSE was 6.46 percentage points, which is over twice the average RMSE of the best model during cross-validation. Compared to the average SNAP participation rate across sampled counties in 2023 of 20.06%, this is a very high error rate, about 32.2%. Given the magnitude of the RMSE, we would not recommend the implementation of this model for making real-world predictions. The error rate also varied across states and across different levels of urbanicity and racial make-up. The first bar graph below shows the error rates by state, which vary dramatically. Texas has by far the highest RMSE at nearly 15 percentage points, and Washington D.C. has the lowest. State size appears to be a factor contributing to this; states with fewer counties seem to have lower error rates than states with many counties (D.C. only has one, while Texas has 254). 
+## Error Rates
+
+When implemented on the testing data, the RMSE was 5.62 percentage points, which is significantly higher than the average RMSE of the best model during cross-validation. Compared to the average SNAP participation rate across sampled counties in 2023 of 20.06%, this is a very high error rate, about 28.02%. Given the magnitude of the RMSE, we would not recommend the implementation of this model for making real-world predictions. The error rate also varied across states and across different levels of urbanicity and racial make-up. The first bar graph below shows the error rates by state, which vary dramatically. Texas has by far the highest RMSE at over 12 percentage points, and Washington D.C. has the lowest. State size appears to be a factor contributing to this; states with fewer counties seem to have lower error rates than states with many counties (D.C. only has one, while Texas has 254). 
 
 ```{r}
 predictions |> 
@@ -792,6 +804,20 @@ predictions |>
 ```
 
 Differential error rates across different sectors of the population are crucial for researchers policymakers to consider when evaluating a model, as they may have ramifications on equity if policy decisions are made using the outputs of the model.
+
+## Relative Importance of Predictors in the Model
+
+The ten most important predictors in the model, measured by the absolute value of their coefficients in the elastic net regression, are displayed in the graph below. Seven out of the top ten are state dummy variables, with the top five all being state dummy variables. The remaining three are the percent of the population in poverty, the percent of the population that is white, and a dummy variable capturing whether or not the county's snap participation rate was imputed from ACS rather than pulled from the FNS data. Interestingly, none of the policy variables were found to have strong predictive power in this model. However, given the nature of the data, this is perhaps not surprising. The policy variables were all at the state level, so their predictive power may have been subsumed under the state dummy variables. Moreover, there was not a lot of variation in SNAP policies across states, which leads those variables to have less predictive power. If we had used a larger dataset (both in terms of years and the number of states), the policy predictors could have perhaps explained more of the variation.
+
+```{r}
+lm_wf |>
+  finalize_workflow(lm_best) |>
+  fit(snap_2019) |>
+  extract_fit_parsnip() |>
+  vip(num_features = 10) +
+  labs(x = "Predictor", y = "Importance", title = "Relative Importance of Predictors")
+
+```
 
 ## Limitations
 The primary limitations of this project were time and computing power. Only having access to our personal laptops, we were not able to use samples as large or models as complex as we would have preferred. This likely contributed to the magnitude of the error rate, and potentially to the differential error rates, as we did not have sample sizes large enough to make accurate predictions for certain subsets of the population.
