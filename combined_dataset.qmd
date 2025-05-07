@@ -1,15 +1,28 @@
 ---
-title: "Combined dataset"
-format: html
-editor: visual
+title: "SNAP Policy Analysis"
+subtitle: "Data Science for Public Policy Final Project"
+author: "Caroline Atuhaire, David Bluhm, Johnny Willing"
+execute:
+  warning: false
+format:
+  html:
+    embed-resources: true
 toc: true
 ---
 
-## SNAP Participation Rates
+# Background and Literature Review
 
-NOTE: CT changed how their counties are organized, so the county groupings from 2015-2019 no longer seem to apply - can ask Alena about this, but seems like we may just want to drop. AK also added a county, but it seems like most of them are still the same, so it should be ok to include.
+The Supplemental Nutrition Assistance Program (SNAP, formerly known as Food Stamps) provides nutritional support for households with low incomes across the United States. As one of the premier means-tested benefit programs provided by the federal government, it is a crucial part of the U.S. social safety net, lifting 3.4 million people out of poverty in 2023 ([Creamer and King, 2024](https://www.census.gov/library/stories/2024/11/supplemental-poverty-measure-visualization.html)). Understanding the factors that contribute to SNAP participation can help researchers and policymakers determine strategies to ensure that families can receive the benefits they need. To that end, this project aims to build a model to predict SNAP household participation rates at the county level using data on county- and state-level demographic, economic, political, and policy characteristics for the 17 states in the Census South region: Delaware, District of Columbia, Florida, Georgia, Maryland, North Carolina, South Carolina, Virginia, West Virginia, Alabama, Kentucky, Mississippi, Tennessee, Arkansas, Louisiana, Oklahoma, and Texas.
 
-```{r message=FALSE, warning=FALSE}
+Past research has identified numerous factors that influence SNAP participation rates. Negative economic conditions, such as high unemployment and poverty rates, are strongly correlated with SNAP participation, as are various demographic characteristics such as disability status, immigrant status, and lower educational levels ([Pinard et al, 2017](https://proxy.library.georgetown.edu/login?url=https://search.ebscohost.com/login.aspx?direct=true&AuthType=ip,uid&db=eih&AN=122298161&site=ehost-live&scope=site)). Age is also an important factor, with eligible seniors enrolling in SNAP at much lower rates than eligible non-seniors ([Jones et al, 2021](https://docs.iza.org/dp14564.pdf)).
+
+Policy conditions have been found to play a significant role in determining SNAP participation. Broad-Based Categorical Eligibility (BBCE) is a policy that expands SNAP eligibility to households which qualify for Temporary Assistance for Needy Families (TANF) or a state maintenance of effort (MOE) funded benefit ([FNS, n.d.a](https://www.fns.usda.gov/snap/broad-based-categorical-eligibility)). States may choose to implement BBCE, effectively allowing them to raise the SNAP gross income limit to up to 200% of the federal poverty line and raise or eliminate the asset limit. [Dickert-Conlin et al (2021)](https://proxy.library.georgetown.edu/login?url=https://search.ebscohost.com/login.aspx?direct=true&AuthType=ip,uid&db=eih&AN=151782572&site=ehost-live&scope=site) and [Han (2016)](https://www-jstor-org.proxy.library.georgetown.edu/stable/26632349?seq=1) find that states’ adoption of BBCE had significant positive effects on SNAP caseloads. Able-bodied adults without dependents (ABAWDs) are subject to work requirements to maintain SNAP eligibility. If an ABAWD is not working longer than three months in any three-year period, they lose eligibility for their benefits; however, states may request that this time limit be waived for part or all of the state, effectively eliminating work requirements [(FNS, n.d.b)](https://www.fns.usda.gov/snap/abawd/waivers). [Dickert-Conlin et al (2021)](https://proxy.library.georgetown.edu/login?url=https://search.ebscohost.com/login.aspx?direct=true&AuthType=ip,uid&db=eih&AN=151782572&site=ehost-live&scope=site) find that work requirements are negatively associated with SNAP participation.
+
+# Data Sources
+
+## Packages for reading data and further analysis
+
+```{r, message=FALSE, warning=FALSE}
 
 library(tidyverse)
 library(readxl)
@@ -21,11 +34,19 @@ library(tigris)
 library(sf)
 library(ggplot2)
 library(ranger)
+library(tidymodels)
+library(Metrics)
 
 # Silence messages from tidycensus
 options(tidycensus.quiet = TRUE)
 
 ```
+
+## SNAP Participation Rates
+
+The numerator is taken from SNAP data tables published by the Food and Nutrition Service, specifically the Bi-Annual State Project Area/County Level Participation and Issuance Data published in a .zip file at this url: <https://www.fns.usda.gov/pd/supplemental-nutrition-assistance-program-snap>. The .zip file contains a set of excel files with counts of individuals and households participating in SNAP by county in January and July for each year from 1984 to 2023. We use a subset of those years, 2015-2019 and 2023. We choose to skip 2020-2022 because of the dramatically altered economic and policy environment during the COVID-19 pandemic which would likely make data from those years less applicable to other years. From this data, we take the average of the counts of households participating in SNAP in January and July, the two times of year this data is updated. A subset of counties are missing from the FNS dataset, so for those counties, we substitute data from the American Community Survey (ACS) 5-year estimates; table B22001 includes a variable for the number of households receiving SNAP benefits.
+
+We take the denominator of the SNAP participation rate from the ACS B22001 table as well, as it also contains the total number of households by county. For the counties missing from the FNS dataset, we inflate the ACS data for each county since SNAP participation rates are often significantly underreported in household surveys such as the ACS [(Rothbaum et al, 2021)](https://www.census.gov/content/dam/Census/newsroom/press-kits/2022/assa/assa-jan2022-paper-fixing%20errors-in-a-snap.pdf). We calculate the inflation factor at the state level, taking the average number of households receiving SNAP benefits in each state year from another FNS dataset (the .zip file under “National and/or State Level Monthly and/or Annual Data” from the url above) and dividing it by the number of households reported as receiving SNAP benefits in each state year in the ACS. For each county whose count of SNAP households came from the ACS rather than FNS, we multiply the household SNAP participation rate by the inflation factor to achieve a more accurate estimate.
 
 ```{r}
 counties_filepath <- "data/snap-zip-fns388a-4"
@@ -70,7 +91,7 @@ read_snap_file <- function(file_path) {
 
 ```
 
-```{r}
+```{r, results='hide'}
 
 fns_snap_county <- map_dfr(counties_filelist, possibly(read_snap_file, otherwise = NULL)) %>%
   filter(year %in% c(2015,2016,2017,2018,2019,2023)) |>
@@ -79,7 +100,7 @@ fns_snap_county <- map_dfr(counties_filelist, possibly(read_snap_file, otherwise
 
 ```
 
-```{r}
+```{r, results='hide'}
 
 # function to read in SNAP state totals downloaded from FNS
 read_state_totals <- function(file_path) {
@@ -147,7 +168,7 @@ fns_state_totals <- map_dfr(state_filelist, read_state_totals) |>
 
 ```
 
-```{r}
+```{r, results='hide'}
 
 # pull in SNAP data from ACS
 acs_years <- list(2015, 2016, 2017, 2018, 2019, 2023)
@@ -202,7 +223,9 @@ snap_participation <- acs_snap_county_infl |>
 
 us_counties <- counties(cb = TRUE) |>
   filter(!STATEFP %in% c("60", "66", "69", "72", "78", "02", "15"))
+```
 
+```{r}
 snap_map <- us_counties |>
   left_join(snap_participation, by = "GEOID")
 
@@ -215,9 +238,12 @@ snap_map |>
 
 ```
 
-## Demographic and Economic Predictors
+## Demographic and Economic Characteristics
 
-```{r}
+### Census ACS Data
+We also take demographic data from the ACS for the years 2015 to 2019 and 2023. Specifically, we take data for things like the number of white respondents, number of respondents that are renters, and the number of respondents in poverty, then divide them by the total number of people that were asked that question to calculate a percentage for each county. In all, we use ACS data to measure the percent male, median age, percent white, percent that are families, percent with a bachelor's degree or more, percent in poverty, percent disabled, percent renting their home, median age, median household income, percent that are not citizens, and percent over 65 years old.
+
+```{r, results='hide'}
 #Census Data
 #######
 census_vars <- tidycensus::load_variables(year = 2016,
@@ -347,10 +373,13 @@ map(.x = years, .f = get_snap)
 combined_census <- bind_rows(snap_2015, snap_2016, snap_2017, snap_2018, 
                              snap_2019, snap_2023) |>
   arrange(GEOID)
-#######
+```
 
-#USDA Rural-Urban Data
-#######
+### USDA Rural-Urban Data
+
+Another data source we use is the Rural Urban Continuum published by the USDA (available here: <https://www.ers.usda.gov/data-products/rural-urban-continuum-codes)>. This data assigns a value to every county based on how rural (9 being the maximum) or urban (1 being the minimum) it is.
+
+```{r}
 ruralurbancodes2013 <- read_excel("data/ruralurbancodes2013.xls")
 ruralurbancodes2023 <- read_excel("data/Ruralurbancontinuumcodes2023.xlsx")
 
@@ -369,10 +398,13 @@ census_urban_rural <- combined_census |>
     year == 2023 ~ RUCC_2023,
     TRUE ~ RUCC_2013)) |>
   select(-RUCC_2013, -RUCC_2023)
-######
+```
 
-#Univ Kentucky Welfare Data
-######
+### University of Kentucky Welfare Data
+
+A third source of demographic data comes from the University of Kentucky’s Center for Poverty Research, who have published national welfare data (available here: <https://cpr.uky.edu/resources/national-welfare-data>). From this data, we can collect information for each state like the unemployment rate, percent of residents that have varying degrees of food insecurity, the gross state product, whether the governor is a Democrat and the percentage of state legislatures that are Democrats, and the minimum wage. The political data has some quirks resulting in missingness, like D.C. having no governor and Nebraska having a unicameral legislature. To address this, we manually impute the political party for D.C.’s mayor and apply Nebraska’s legislature data to both chambers.
+
+```{r}
 ky_welfare <- read_excel("data/UKCPR_National_Welfare_Data_1980_2023.xlsx", 
                          sheet = "Data", 
                          col_types = c("text", 
@@ -416,10 +448,9 @@ census_urban_rural <- census_urban_rural |>
 demographic_combined <-  census_urban_rural |>
   left_join(ky_welfare, by = c("state_fips", "year")) 
 
-#Last cleaning details and Exploration
-#####
+#Filtering out Puerto Rico
 demographic_combined <- demographic_combined |>
-  filter(state_fips != 72) #Filtering out PR
+  filter(state_fips != 72)
 
 #Manually imputing 1 to reflect DC's Democratic mayor each year
 demographic_combined <- demographic_combined |>
@@ -430,7 +461,6 @@ demographic_combined <- demographic_combined |>
     GEOID == "11001", 1, fraction_of_state_house_that_is_democrat))
 
 #Manually imputing Nebraska's unicameral makeup to both state house and senate pct
-#Though technically nonpartisan, data on party endorsements of candidates is used
 demographic_combined <- demographic_combined |>
   mutate(fraction_of_state_house_that_is_democrat = ifelse(
     state_fips == "31" & year %in% c(2015, 2016), 12/49, 
@@ -460,13 +490,17 @@ demographic_combined <- demographic_combined |>
   mutate(fraction_of_state_senate_that_is_democrat = ifelse(
     state_fips == "31" & year %in% c(2023), 17/49, 
     fraction_of_state_senate_that_is_democrat))
-
 ```
 
 ## SNAP Policy Predictors
 
+We include four variables covering state-level policies governing SNAP eligibility, three of which were constructed from the FNS’s SNAP Policy Database (available here: <https://www.ers.usda.gov/data-products/snap-policy-data-sets>) and one of which was entered manually. Specifically, our data contains: 
+* A binary variable indicating whether a state implemented BBCE in a given year, taken directly from the SNAP Policy Database for 2015-2019. For 2023, this information was collected from FNS’s BBCE site (accessed for 2023 via the Wayback Machine here: <https://web.archive.org/web/20230331232320/https://www.fns.usda.gov/snap/broad-based-categorical-eligibility>).
+* A continuous variable that measures the state’s income limit for SNAP recipients as a percentage of the federal poverty line. For states that implement BBCE, the SNAP Policy Database contains this information for 2015-2019, with non-BBCE states coded as missing. We coded non-BBCE states’ as 130, because 130% is the default income limit for SNAP eligibility. For 2023, this information was collected from the FNS BBCE site linked above.
+* A categorical variable that equals 0 if states have the default federal asset limit for SNAP eligibility ($2,250 for most of the years in the sample), 1 if states have increased the asset limit via BBCE, and 2 if states have eliminated the asset limit entirely. This variable was constructed from the SNAP Policy Database for 2015-2019. For 2023, this information was collected from the FNS BBCE site linked above.
+* A categorical variable that equals 0 for states that have not waived the ABAWD work requirement time limit, 1 for states that have waived the time limit for part of the state, and 2 for states that have waived the time limit throughout the entire state. For 2015-2019, this data was collected by visually inspecting a map published by the Center on Budget and Policy Priorities showing areas covered by ABAWD time limit waivers for all 50 states (available here: <https://www.cbpp.org/research/states-have-requested-waivers-from-snaps-time-limit-in-high-unemployment-areas-for-the-past>). For DC, 2015-2019 ABAWD time limit waiver data was collected directly from FNS (available here: <https://www.fns.usda.gov/snap/abawd/waivers/2015-2019>). For 2023, this information was collected from the 2023 State Options Report (<https://fns-prod.azureedge.us/sites/default/files/resource-files/snap-15th-state-options-report-october23.pdf>).
+
 ```{r}
-library(readxl)
 
 poldb <- read_xlsx("data/SNAPPolicyDatabase.xlsx", sheet = "SNAP Policy Database")
 
@@ -507,6 +541,8 @@ combined_poldb <- poldb |>
          ))
 
 ```
+
+# Data Wrangling and Expoloratory Data Analysis
 
 ## Merging datasets
 
@@ -553,10 +589,13 @@ snap_train |> group_by(year) |> summarize(n = n())
 
 ## Exploratory Data Analysis
 
+# Data Analysis
+
 ## Training models
 
+### Creating folds and a recipe
+
 ```{r}
-library(tidymodels)
 
 # set up folds
 snap_folds <- rolling_origin(snap_train, initial = 1420, assess = 1420, cumulative = FALSE)
@@ -582,7 +621,7 @@ snap_rec <-
 
 ```
 
-Linear Regression Elastic Net
+### Linear Regression Elastic Net
 
 ```{r}
 lm_spec <- linear_reg(penalty = tune(),
@@ -621,7 +660,7 @@ lm_wf |>
 
 ```
 
-KNN
+### K-Nearest Neighbor
 
 ```{r}
 knn_spec <- nearest_neighbor(neighbors = tune()) |>
@@ -653,7 +692,7 @@ saveRDS(knn_res, file = "knn_res.rds")
 
 ```
 
-Random Forest
+### Random Forest
 
 ```{r}
 set.seed(05072025)
@@ -676,10 +715,9 @@ rf_res |>
 
 ```
 
-## Testing final model
+### Testing Final Model
 
 ```{r}
-library(Metrics)
 
 final_fit <- lm_wf |>
   finalize_workflow(parameters = lm_best) |>
@@ -697,4 +735,10 @@ summary(snap_test$snap_participation_rate)
 
 ```
 
-## Implementing model (fingers crossed)
+## Implementing Final Model
+
+# Discussion of Results
+
+# Bibliography
+
+
