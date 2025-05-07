@@ -2,7 +2,11 @@
 
 Caroline Atuhaire, David Bluhm, Johnny Willing
 
-GitHub pages: <https://github.com/dcbluhm/SNAP_modeling>
+An html of our analysis is available [here](https://dcbluhm.github.io/SNAP_modeling/)
+
+Public Github repository is available [here](https://github.com/dcbluhm/SNAP_modeling)
+
+The qmd file for our analysis is available [here](https://github.com/dcbluhm/SNAP_modeling/blob/d3ee9206aebb86cf800353bafc6a0724b8b5ea38/SNAP_modeling_final.qmd)
 
 # Overview
 
