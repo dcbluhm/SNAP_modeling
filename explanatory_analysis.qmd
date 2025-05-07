@@ -19,6 +19,9 @@ library(tidycensus)
 library(tigris)
 library(sf)
 library(ggplot2)
+library(ranger)
+library(tidymodels)
+library(Metrics)
 
 # Silence messages from tidycensus
 options(tidycensus.quiet = TRUE)
@@ -33,7 +36,6 @@ counties_filelist <- list.files(path = counties_filepath, pattern = "\\.xlsx?$",
 
 ```{r}
 
-# function to read in SNAP county data files downloaded from FNS
 read_snap_file <- function(file_path) {
   snap_df <- read_excel(file_path, skip = 3) |> clean_names()
   snap_df <- snap_df %>% select(-matches("^\\.\\.\\.|^x\\d+$"))  # drop empty columns
@@ -68,20 +70,17 @@ read_snap_file <- function(file_path) {
 
 ```
 
-```{r}
+```{r, results='hide'}
 
 fns_snap_county <- map_dfr(counties_filelist, possibly(read_snap_file, otherwise = NULL)) %>%
-  mutate(year = as.numeric(year)) %>%  
   filter(year %in% c(2015,2016,2017,2018,2019,2023)) |>
   group_by(year, GEOID, state_code, county_code) |>
   summarize(fns_snap_households = round(mean(fns_snap_households)))
 
-snap_all <- map_dfr(counties_filelist, possibly(read_snap_file, otherwise = NULL))
-table(snap_all$year, snap_all$month)
-
 ```
 
-```{r}
+```{r,results='hide'}
+
 
 # function to read in SNAP state totals downloaded from FNS
 read_state_totals <- function(file_path) {
@@ -146,13 +145,10 @@ fns_state_totals <- map_dfr(state_filelist, read_state_totals) |>
   filter(!year %in% c(2014, 2020, 2022, 2024)) |>
   group_by(year, state_name) |>
   summarize(fns_snap_households = round(mean(households)))
-
-
   
 ```
 
 ```{r}
-
 # pull in SNAP data from ACS
 acs_years <- list(2015, 2016, 2017, 2018, 2019, 2023)
 
@@ -161,8 +157,8 @@ acs_snap_county <- map_dfr(
   ~get_acs(
     geography = "county",
     variables = c(
-      total_households = "B19058_001",
-      acs_snap_households  = "B19058_002"
+      total_households = "B22001_001",
+      acs_snap_households  = "B22001_002"
     ),
     year = .x,
     survey = "acs5",
@@ -202,11 +198,14 @@ snap_participation <- acs_snap_county_infl |>
   mutate(fns_snap_rate = fns_snap_households/total_households,
          snap_participation_rate = if_else(!is.na(fns_snap_rate), fns_snap_rate, acs_snap_rate_infl),
          snap_rate_acs = if_else(!is.na(fns_snap_rate), 0, 1)) |>
-  select(year, GEOID, state_name, snap_participation_rate, snap_rate_acs)
+  select(year, GEOID, state_name, snap_participation_rate, snap_rate_acs, total_households)
 
 us_counties <- counties(cb = TRUE) |>
   filter(!STATEFP %in% c("60", "66", "69", "72", "78", "02", "15"))
 
+```
+
+```{r}
 snap_map <- us_counties |>
   left_join(snap_participation, by = "GEOID")
 
@@ -216,11 +215,6 @@ snap_map |>
   geom_sf(mapping = aes(fill = snap_participation_rate)) +
   scale_fill_gradient(low = "#cfe8f3", high = "#062635") +
   theme_void()
-
-table(us_counties$STATE_NAME)
-
-table(snap_participation$state_name,snap_participation$year)
-
 ```
 
 ## Demographic and Economic Predictors
@@ -355,10 +349,13 @@ map(.x = years, .f = get_snap)
 combined_census <- bind_rows(snap_2015, snap_2016, snap_2017, snap_2018, 
                              snap_2019, snap_2023) |>
   arrange(GEOID)
-#######
 
-#USDA Rural-Urban Data
-#######
+```
+
+
+### USDA Rural-Urban Data
+
+```{r}
 ruralurbancodes2013 <- read_excel("data/ruralurbancodes2013.xls")
 ruralurbancodes2023 <- read_excel("data/Ruralurbancontinuumcodes2023.xlsx")
 
@@ -377,10 +374,16 @@ census_urban_rural <- combined_census |>
     year == 2023 ~ RUCC_2023,
     TRUE ~ RUCC_2013)) |>
   select(-RUCC_2013, -RUCC_2023)
-######
+```
 
-#Univ Kentucky Welfare Data
-######
+
+
+### University of Kentucky Welfare Data
+
+A third source of demographic data comes from the University of Kentucky’s Center for Poverty Research, who have published national welfare data (available here: <https://cpr.uky.edu/resources/national-welfare-data>). From this data, we can collect information for each state like the unemployment rate, percent of residents that have varying degrees of food insecurity, the gross state product, whether the governor is a Democrat and the percentage of state legislatures that are Democrats, and the minimum wage. The political data has some quirks resulting in missingness, like D.C. having no governor and Nebraska having a unicameral legislature. To address this, we manually impute the political party for D.C.’s mayor and apply Nebraska’s legislature data to both chambers.
+
+
+```{r}
 ky_welfare <- read_excel("data/UKCPR_National_Welfare_Data_1980_2023.xlsx", 
                          sheet = "Data", 
                          col_types = c("text", 
@@ -424,13 +427,9 @@ census_urban_rural <- census_urban_rural |>
 demographic_combined <-  census_urban_rural |>
   left_join(ky_welfare, by = c("state_fips", "year")) 
 
-#Last cleaning details and Exploration
-#####
-View(demographic_combined |>
-  filter(is.na(governor_is_democrat_1_yes))) #All DC and PR
-
+#Filtering out Puerto Rico
 demographic_combined <- demographic_combined |>
-  filter(state_fips != 72) #Filtering out PR
+  filter(state_fips != 72)
 
 #Manually imputing 1 to reflect DC's Democratic mayor each year
 demographic_combined <- demographic_combined |>
@@ -441,7 +440,6 @@ demographic_combined <- demographic_combined |>
     GEOID == "11001", 1, fraction_of_state_house_that_is_democrat))
 
 #Manually imputing Nebraska's unicameral makeup to both state house and senate pct
-#Though technically nonpartisan, data on party endorsements of candidates is used
 demographic_combined <- demographic_combined |>
   mutate(fraction_of_state_house_that_is_democrat = ifelse(
     state_fips == "31" & year %in% c(2015, 2016), 12/49, 
@@ -474,18 +472,22 @@ demographic_combined <- demographic_combined |>
 
 ```
 
+
+
 ## SNAP Policy Predictors
 
+We include four variables covering state-level policies governing SNAP eligibility, three of which were constructed from the FNS’s SNAP Policy Database (available here: <https://www.ers.usda.gov/data-products/snap-policy-data-sets>) and one of which was entered manually. Specifically, our data contains: 
+* A binary variable indicating whether a state implemented BBCE in a given year, taken directly from the SNAP Policy Database for 2015-2019. For 2023, this information was collected from FNS’s BBCE site (accessed for 2023 via the Wayback Machine here: <https://web.archive.org/web/20230331232320/https://www.fns.usda.gov/snap/broad-based-categorical-eligibility>).
+* A continuous variable that measures the state’s income limit for SNAP recipients as a percentage of the federal poverty line. For states that implement BBCE, the SNAP Policy Database contains this information for 2015-2019, with non-BBCE states coded as missing. We coded non-BBCE states’ as 130, because 130% is the default income limit for SNAP eligibility. For 2023, this information was collected from the FNS BBCE site linked above.
+* A categorical variable that equals 0 if states have the default federal asset limit for SNAP eligibility ($2,250 for most of the years in the sample), 1 if states have increased the asset limit via BBCE, and 2 if states have eliminated the asset limit entirely. This variable was constructed from the SNAP Policy Database for 2015-2019. For 2023, this information was collected from the FNS BBCE site linked above.
+* A categorical variable that equals 0 for states that have not waived the ABAWD work requirement time limit, 1 for states that have waived the time limit for part of the state, and 2 for states that have waived the time limit throughout the entire state. For 2015-2019, this data was collected by visually inspecting a map published by the Center on Budget and Policy Priorities showing areas covered by ABAWD time limit waivers for all 50 states (available here: <https://www.cbpp.org/research/states-have-requested-waivers-from-snaps-time-limit-in-high-unemployment-areas-for-the-past>). For DC, 2015-2019 ABAWD time limit waiver data was collected directly from FNS (available here: <https://www.fns.usda.gov/snap/abawd/waivers/2015-2019>). For 2023, this information was collected from the 2023 State Options Report (<https://fns-prod.azureedge.us/sites/default/files/resource-files/snap-15th-state-options-report-october23.pdf>).
+
 ```{r}
-library(readxl)
+poldb <- read_xlsx("data/SNAPPolicyDatabase.xlsx", sheet = "SNAP Policy Database")
 
-poldb <- read_xlsx("C:/Users/Caroline/Desktop/MIDP SEMESTER IV/Introduction to Data Science R/SNAP_modeling/data/SNAPPolicyDatabase.xlsx", sheet = "SNAP Policy Database")
+abawd_waivers <- read_xlsx("data/SNAPPolicyDatabase.xlsx", sheet = "ABAWD Waivers")
 
-abawd_waivers <- read_xlsx("C:/Users/Caroline/Desktop/MIDP SEMESTER IV/Introduction to Data Science R/SNAP_modeling/data/SNAPPolicyDatabase.xlsx", 
-                           sheet = "ABAWD Waivers")
-
-poldb_2023 <- read_xlsx("C:/Users/Caroline/Desktop/MIDP SEMESTER IV/Introduction to Data Science R/SNAP_modeling/data/SNAPPolicyDatabase.xlsx", 
-                        sheet = "2023 Data")
+poldb_2023 <- read_xlsx("data/SNAPPolicyDatabase.xlsx", sheet = "2023 Data")
 
 mode <- function(x) {
   u <- unique(x)
@@ -493,14 +495,16 @@ mode <- function(x) {
   u[tab == max(tab)]
 }
 
-
-
 combined_poldb <- poldb |>
   mutate(year = as.numeric(str_sub(as.character(yearmonth), 1, 4))) |>
   group_by(year, state_fips) |>
   summarize(bbce = mode(bbce),
             bbce_asset = mode(bbce_asset),
             bbce_inclmt = mode(bbce_inclmt)) |>
+  group_by(year,state_fips) |>
+    summarize(bbce = last(bbce),
+            bbce_asset = last(bbce_asset),
+            bbce_inclmt = last(bbce_inclmt)) |>
   left_join(abawd_waivers, by = c("state_fips", "year")) |>
   bind_rows(poldb_2023) |>
   filter(year > 2014,
@@ -517,25 +521,39 @@ combined_poldb <- poldb |>
            TRUE ~ state_fips
          ))
 
+
 ```
+
+# Data Wrangling and Expoloratory Data Analysis
+
+
 
 ## Merging datasets
 
 ```{r}
+
 snap_2model <- snap_participation |>
   left_join(demographic_combined, by = c("GEOID", "year")) |>
   left_join(combined_poldb, by = c("state_fips", "year")) |>
-  drop_na() |>
-  filter(snap_participation_rate < 1) |>
-  select(-median_income_individual)
+  filter(snap_participation_rate < 1,
+       state_name %in% c("Alabama", "Arkansas", "Delaware", "District of Columbia", "Florida", "Georgia", "Louisiana",
+                         "Kentucky", "Louisiana", "Maryland", "Mississippi", "North Carolina", "Oklahoma", "South Carolina",
+                         "Tennessee", "Texas", "Virginia", "West Virginia")) |> 
+  drop_na()
 
 county_observations <- snap_2model |>
   group_by(GEOID) |>
   summarize(num_obs = n()) |>
-  filter(num_obs<6)
+  filter(num_obs < 6)
 
 snap_2model <- snap_2model |>
-  anti_join(county_observations, by = "GEOID")
+  anti_join(county_observations, by = c("GEOID"))
+
+# Remove extraneous dataframes to save memory
+rm(abawd_waivers, acs_inflators, acs_snap_county, acs_snap_county_infl, acs_state_totals, acs_years, census_urban_rural, 
+   census_vars, combined_census, combined_poldb, county_observations, demographic_combined, fns_snap_county, fns_state_totals,
+   ky_welfare, poldb, poldb_2023, ruralurbancodes2013, ruralurbancodes2023, snap_2015, snap_2016, snap_2017, snap_2018, 
+   snap_2019, snap_2023, snap_participation, state_fips, us_counties, snap_map)
 
 ```
 
@@ -546,57 +564,35 @@ snap_test <- snap_2model |>
   filter(year==2023)
 
 snap_train <- snap_2model |>
-  filter(year!=2023)
+  filter(year%in% c(2017, 2018, 2019)) |>
+  arrange(year)
 
+snap_train |> group_by(year) |> summarize(n = n())
 ```
-
-
-
-
 
 ## Exploratory Data Analysis
 
 We explore the data to understand patterns and trends in Supplemental Nutrition Assistance Program (SNAP) participation across U.S. counties. The combined dataset covers administrative records from 2015 to 2019 and 2023, integrating county-level SNAP household participation data with demographic and socioeconomic indicators, including variables from the American Community Survey (ACS). This exploratory analysis examines temporal and geographic variation in participation, evaluates data quality and distributions, and identifies potential associations between SNAP participation rates and key covariates such as poverty levels, unemployment rates, and household characteristics.
 
-
 ### National Average SNAP Participation Rate by Year to 2019
-```{r}
-national_avg <- snap_2model |>
-  filter(year <= 2019) |>  
-  group_by(year) |>
-  summarize(national_avg_rate = mean(snap_participation_rate, na.rm = TRUE))
 
-ggplot(national_avg, aes(x = year, y = national_avg_rate)) +
+```{r}
+southern_state <- snap_2model |>
+  filter(year >= 2017 & year <= 2019) |>  
+  group_by(year) |>
+  summarize(national_avg_rate = mean(snap_participation_rate, na.rm = TRUE), .groups = "drop")
+
+ggplot(southern_state, aes(x = year, y = national_avg_rate)) +
   geom_line(size = 1.2, color = "darkblue") +
   geom_point(color = "darkred") +
   labs(
-    title = "National Average SNAP Participation Rate by Year (Up to 2019)",
+    title = "Southern State Average SNAP Participation Rate by Year (2017–2019)",
     x = "Year", y = "Average Participation Rate"
   ) +
+  scale_x_continuous(breaks = 2017:2019) +
   theme_minimal()
 
 ```
-The figure displays the national average SNAP participation rate across all counties from 2015 to 2019. The chart reveals a consistent downward trend in the average rate, beginning at approximately 18.6% in 2015 and declining to just above 16.2% by 2019. The decrease appears steady, with the most pronounced drop occurring between 2016 and 2017. 
-
-
-
-### 2019 county-level map of SNAP participation rates
-
-```{r}
-library(ggplot2)
-
-snap_map |>
-  filter(year == 2019) |>
-  ggplot() +
-  geom_sf(aes(fill = snap_participation_rate), color = NA) +
-  scale_fill_gradient(low = "#cfe8f3", high = "#062635", na.value = "grey90") +
-  labs(title = "SNAP Participation Rate by County (2019)",
-       fill = "Participation Rate") +
-  theme_void() +
-  theme(legend.position = "bottom")
-
-```
-The map shows county-level SNAP participation rates for 2019. Darker areas indicate higher rates, revealing clear geographic variation. Higher participation is concentrated in parts of the South and Southwest, while lower rates appear in much of the Midwest and Mountain West. This highlights regional disparities in program uptake.
 
 
 ### Extreme (highest and lowest participation) states and counties per year
@@ -633,10 +629,9 @@ combined_extremes <- left_join(state_extremes, county_extremes, by = "year")
 print(combined_extremes)
 
 ```
-At the county level, SNAP participation rates varied widely. Owsley County, Kentucky and Perry County, Alabama repeatedly appeared among those with the highest rates, exceeding 70% in some years. In contrast, counties like Ellis County, Oklahoma, Alexander County, Illinois, and Brooke County, West Virginia recorded the lowest rates, with values of 0%. These results highlight pronounced local disparities in program participation, even within states.
-
 
 ### Summary of counties with 0% participation rate
+
 ```{r}
 zero_participation_list <- snap_2model |>
   filter( year <= 2019, snap_participation_rate == 0) |>
@@ -647,9 +642,9 @@ print(zero_participation_list)
 
 ```
 
-Several counties across multiple states reported a SNAP participation rate of zero in specific years between 2015 and 2019. These include repeated cases in Illinois (e.g., Alexander, Carroll, Clinton), Oklahoma (e.g., Ellis, Love, Cimarron), Montana (Prairie County), and others. 
 
-### Summarize counties with participation rate > 50%
+### Summarize counties with participation rate \> 50%
+
 ```{r}
 
 over_50_summary <- snap_2model |>
@@ -665,13 +660,146 @@ over_50_summary <- snap_2model |>
 print(over_50_summary)
 
 ```
+
 From 2015 to 2019, the share of counties with SNAP participation rates above 50% declined steadily from 1.53% (35 counties) to 0.54% (13 counties), indicating a shrinking number of high-participation counties over time.
 
+```{r}
+
+# Summarize for Census South region (2015–2019)
+south_summary <- snap_2model |>
+  filter(state_name %in% south_states, year <= 2019) |>
+  group_by(year) |>
+  summarize(
+    avg_snap_rate = mean(snap_participation_rate, na.rm = TRUE),
+    avg_median_income = mean(median_household_income, na.rm = TRUE),
+    avg_poverty_rate = mean(poverty_pct, na.rm = TRUE),
+    avg_unemployment_rate = mean(unemployment_rate, na.rm = TRUE),
+    total_counties = n(),
+    .groups = "drop"
+  )
+
+print(south_summary)
+
+```
+
+```{r}
+
+# Reshape to long format for plotting
+south_long <- south_summary |>
+  pivot_longer(
+    cols = c(avg_snap_rate, avg_median_income, avg_poverty_rate, avg_unemployment_rate),
+    names_to = "variable",
+    values_to = "value"
+  )
+
+# Create a faceted line graph
+ggplot(south_long, aes(x = year, y = value)) +
+  geom_line(size = 1.2, color = "steelblue") +
+  geom_point(size = 2, color = "darkred") +
+  facet_wrap(~ variable, scales = "free_y") +
+  labs(
+    title = "Census South Trends (2015–2019)",
+    x = "Year",
+    y = "Value"
+  ) +
+  theme_minimal()
+
+```
+
+```{r}
+
+# Step 1: Define South states (already defined earlier)
+south_states <- c(
+  "Delaware", "District of Columbia", "Florida", "Georgia", "Maryland",
+  "North Carolina", "South Carolina", "Virginia", "West Virginia",
+  "Alabama", "Kentucky", "Mississippi", "Tennessee", "Arkansas",
+  "Louisiana", "Oklahoma", "Texas"
+)
+
+# Step 2: South summary
+south_summary <- snap_2model |>
+  filter(state_name %in% south_states, year <= 2019) |>
+  group_by(year) |>
+  summarize(
+    avg_snap_rate = mean(snap_participation_rate, na.rm = TRUE),
+    avg_median_income = mean(median_household_income, na.rm = TRUE),
+    avg_poverty_rate = mean(poverty_pct, na.rm = TRUE),
+    avg_unemployment_rate = mean(unemployment_rate, na.rm = TRUE),
+    .groups = "drop"
+  ) |>
+  mutate(region = "Census South")
+
+# Step 3: National summary
+national_summary <- snap_2model |>
+  filter(year <= 2019) |>
+  group_by(year) |>
+  summarize(
+    avg_snap_rate = mean(snap_participation_rate, na.rm = TRUE),
+    avg_median_income = mean(median_household_income, na.rm = TRUE),
+    avg_poverty_rate = mean(poverty_pct, na.rm = TRUE),
+    avg_unemployment_rate = mean(unemployment_rate, na.rm = TRUE),
+    .groups = "drop"
+  ) |>
+  mutate(region = "National")
+
+# Step 4: Combine
+combined_summary <- bind_rows(south_summary, national_summary)
+
+# Step 5: Reshape for plotting
+combined_long <- combined_summary |>
+  pivot_longer(
+    cols = c(avg_snap_rate, avg_median_income, avg_poverty_rate, avg_unemployment_rate),
+    names_to = "variable",
+    values_to = "value"
+  )
+
+# Step 6: Plot
+ggplot(combined_long, aes(x = year, y = value, color = region)) +
+  geom_line(size = 1.2) +
+  geom_point(size = 2) +
+  facet_wrap(~ variable, scales = "free_y") +
+  labs(
+    title = "Trends in Census South vs National (2015–2019)",
+    x = "Year",
+    y = "Value",
+    color = "Region"
+  ) +
+  theme_minimal()
+
+
+```
+
+```{r}
+
+# Summarize average SNAP participation by state for 2019
+state_bar_data <- snap_2model |>
+  filter(year == 2019, state_name %in% south_states) |>
+  group_by(state_name) |>
+  summarize(
+    avg_snap_rate = mean(snap_participation_rate, na.rm = TRUE),
+    .groups = "drop"
+  )
+
+# Create the bar plot
+ggplot(state_bar_data, aes(x = reorder(state_name, avg_snap_rate), y = avg_snap_rate)) +
+  geom_col(fill = "steelblue") +
+  coord_flip() +  # Flip for easier label reading
+  labs(
+    title = "Average SNAP Participation Rate by State (Census South, 2019)",
+    x = "State",
+    y = "Average Participation Rate"
+  ) +
+  theme_minimal()
+
+
+```
 
 ### SNAP Participation by Median Household Income Bracket
+
 ```{r}
-snap_income_brackets <- snap_2model |>
-  filter(!is.na(median_household_income)) |>
+# Group, summarize, and order income brackets
+snap_income_brackets_south <- snap_2model |>
+  filter(state_name %in% south_states, !is.na(median_household_income)) |>
   mutate(income_group = case_when(
     median_household_income < 30000 ~ "<$30k",
     median_household_income >= 30000 & median_household_income < 40000 ~ "$30k–39k",
@@ -688,77 +816,111 @@ snap_income_brackets <- snap_2model |>
     .groups = "drop"
   ) |>
   mutate(
-    percent_of_counties = round(100 * n_counties / sum(n_counties), 1)
-  ) |>
-  arrange(desc(avg_snap_rate))
+    percent_of_counties = round(100 * n_counties / sum(n_counties), 1),
+    income_group = factor(income_group, levels = c(
+      "<$30k", "$30k–39k", "$40k–49k", "$50k–59k", "$60k–69k", "≥$70k"
+    ))
+  )
 
-print(snap_income_brackets)
+# Plot
+ggplot(snap_income_brackets_south, aes(x = income_group, y = avg_snap_rate)) +
+  geom_col(fill = "steelblue") +
+  geom_text(aes(label = round(avg_snap_rate, 2)), vjust = -0.5, size = 4) +
+  labs(
+    title = "Average SNAP Participation Rate by Income Bracket (South States)",
+    x = "Median Household Income Bracket",
+    y = "Average SNAP Participation Rate"
+  ) +
+  theme_minimal()
 
 ```
-Counties with lower median household incomes had significantly higher average SNAP participation rates, with counties under $30k showing the highest average rate (40.8%), and participation decreasing steadily as income rises.
 
+This bar chart shows a clear inverse relationship between median household income and SNAP participation rates across Southern states. Counties with the lowest incomes (under \$30k) have the highest average SNAP participation rate at 41%, while those with incomes over \$70k have the lowest rate at just 10%. This trend highlights how economic disadvantage is strongly associated with greater reliance on SNAP benefits in the region.
 
 ```{r}
 
-snap_summary_by_year <- snap_2model |>
+snap_white_summary <- snap_2model |>
+  filter(state_name %in% south_states, year <= 2019, !is.na(white_pct)) |>
   group_by(year) |>
   summarize(
-    min_white_pct = min(white_pct, na.rm = TRUE),
-    max_white_pct = max(white_pct, na.rm = TRUE),
-    min_median_income = min(median_household_income, na.rm = TRUE),
-    max_median_income = max(median_household_income, na.rm = TRUE),
-    min_poverty_pct = min(poverty_pct, na.rm = TRUE),
-    max_poverty_pct = max(poverty_pct, na.rm = TRUE),
+    avg_white_pct = mean(white_pct, na.rm = TRUE),
+    avg_snap_rate = mean(snap_participation_rate, na.rm = TRUE),
     .groups = "drop"
   )
 
-print(snap_summary_by_year)
+print(snap_white_summary)
+
+
+```
+
+```{r}
+library(dplyr)
+library(tidyr)
+library(ggplot2)
+
+# Step 1: Summarize for South states by year
+snap_white_nonwhite_summary <- snap_2model |>
+  filter(state_name %in% south_states, year <= 2019, !is.na(white_pct)) |>
+  mutate(non_white_pct = 1 - white_pct) |>
+  group_by(year) |>
+  summarize(
+    avg_white_pct = mean(white_pct, na.rm = TRUE),
+    avg_non_white_pct = mean(non_white_pct, na.rm = TRUE),
+    avg_snap_rate = mean(snap_participation_rate, na.rm = TRUE),
+    .groups = "drop"
+  )
+
+# Step 2: Pivot to long format for plotting
+snap_long <- snap_white_nonwhite_summary |>
+  pivot_longer(
+    cols = c(avg_white_pct, avg_non_white_pct, avg_snap_rate),
+    names_to = "variable",
+    values_to = "value"
+  )
+
+# Step 3: Clean variable labels
+snap_long$variable <- recode(snap_long$variable,
+  avg_white_pct = "White Population (%)",
+  avg_non_white_pct = "Non-White Population (%)",
+  avg_snap_rate = "SNAP Participation Rate"
+)
+
+# Step 4: Plot
+ggplot(snap_long, aes(x = factor(year), y = value)) +
+  geom_col(fill = "steelblue") +
+  facet_wrap(~ variable, scales = "free_y") +
+  labs(
+    title = "SNAP Participation and Demographic Composition Over Time (South States)",
+    x = "Year", y = "Rate / Percentage"
+  ) +
+  scale_y_continuous(labels = scales::percent_format(accuracy = 1)) +
+  theme_minimal()
+
 
 ```
 
 summary of zero participation counties by year
+
 ```{r}
 
-zero_participation_summary <- snap_2model |>
-  filter(snap_participation_rate == 0, year <= 2019) |>
+zero_participation_south <- snap_2model |>
+  filter(
+    state_name %in% south_states,
+    snap_participation_rate == 0,
+    year >= 2017 & year <= 2019
+  ) |>
   group_by(year) |>
   summarize(num_counties_zero_rate = n(), .groups = "drop")
 
-print(zero_participation_summary)
-
-```
-
-
-```{r}
-# Calculate national average per year
-national_avg <- snap_2model |>
-  group_by(year) |>
-  summarize(national_avg_rate = mean(snap_participation_rate, na.rm = TRUE), .groups = "drop")
-
-# Join the national average back to the dataset
-snap_with_avg <- snap_2model |>
-  left_join(national_avg, by = "year")
-
-# Count total counties and those above the average
-above_avg_summary <- snap_with_avg |>
-  group_by(year) |>
-  summarize(
-    total_counties = n(),
-    counties_above_avg = sum(snap_participation_rate > national_avg_rate),
-    percent_above_avg = round(100 * counties_above_avg / total_counties, 1),
-    .groups = "drop"
-  )
-
-print(above_avg_summary)
+print(zero_participation_south)
 
 
 ```
 
-
-
-
 ```{r}
-state_extremes <- snap_2model |>
+
+state_extremes_south <- snap_2model |>
+  filter(state_name %in% south_states, year <= 2019) |>
   group_by(year, state_name) |>
   summarize(state_avg = mean(snap_participation_rate, na.rm = TRUE), .groups = "drop") |>
   group_by(year) |>
@@ -766,6 +928,7 @@ state_extremes <- snap_2model |>
   rename(highest_state = state_name, highest_rate = state_avg) |>
   full_join(
     snap_2model |>
+      filter(state_name %in% south_states, year <= 2019) |>
       group_by(year, state_name) |>
       summarize(state_avg = mean(snap_participation_rate, na.rm = TRUE), .groups = "drop") |>
       group_by(year) |>
@@ -773,13 +936,14 @@ state_extremes <- snap_2model |>
       rename(lowest_state = state_name, lowest_rate = state_avg),
     by = "year"
   )
-print(state_extremes)
+
+print(state_extremes_south)
 
 
 ```
 
-
 ### Z-score standardize selected predictors
+
 ```{r}
 library(tidyverse)
 
@@ -810,8 +974,6 @@ ggplot(plot_df, aes(x = value, y = snap_participation_rate)) +
 
 ```
 
-
-
 ```{r}
 ggplot(snap_2model, aes(x = factor(rural_urban_score), y = snap_participation_rate)) +
   geom_boxplot(fill = "lightblue") +
@@ -820,6 +982,7 @@ ggplot(snap_2model, aes(x = factor(rural_urban_score), y = snap_participation_ra
 
 ```
 
+The boxplot shows that SNAP participation rates tend to increase with rurality: counties with higher RUCC codes (more rural) have higher median participation and more variation compared to urban counties (RUCC 1–3), which show lower, more consistent rates. Rural areas (RUCC 7–9) also exhibit more frequent high-end outliers, suggesting that some rural counties experience exceptionally high SNAP enrollment. This pattern highlights a rural-urban divide in SNAP participation, potentially reflecting greater need or fewer resources in rural communities.
 
 ```{r}
 # Correlation test
@@ -845,7 +1008,6 @@ ggplot(snap_2model, aes(x = bachelor_or_higher_pct, y = snap_participation_rate)
 ```
 
 ```{r}
-library(ggplot2)
 
 snap_2model |>
   select(poverty_pct, median_household_income, disabled_pct, rural_urban_score) |>
@@ -857,10 +1019,6 @@ snap_2model |>
   theme_minimal()
 
 ```
-
-
-
-
 
 ```{r}
 ggplot(snap_2model, aes(x = disabled_pct, y = snap_participation_rate)) +
@@ -874,7 +1032,6 @@ ggplot(snap_2model, aes(x = disabled_pct, y = snap_participation_rate)) +
   theme_minimal()
 
 ```
-
 
 ```{r}
 
