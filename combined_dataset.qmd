@@ -157,8 +157,8 @@ acs_snap_county <- map_dfr(
   ~get_acs(
     geography = "county",
     variables = c(
-      total_households = "B19058_001",
-      acs_snap_households  = "B19058_002"
+      total_households = "B22001_001",
+      acs_snap_households  = "B22001_002"
     ),
     year = .x,
     survey = "acs5",
@@ -198,7 +198,7 @@ snap_participation <- acs_snap_county_infl |>
   mutate(fns_snap_rate = fns_snap_households/total_households,
          snap_participation_rate = if_else(!is.na(fns_snap_rate), fns_snap_rate, acs_snap_rate_infl),
          snap_rate_acs = if_else(!is.na(fns_snap_rate), 0, 1)) |>
-  select(year, GEOID, state_name, snap_participation_rate, snap_rate_acs)
+  select(year, GEOID, state_name, snap_participation_rate, snap_rate_acs, total_households)
 
 us_counties <- counties(cb = TRUE) |>
   filter(!STATEFP %in% c("60", "66", "69", "72", "78", "02", "15"))
@@ -212,12 +212,6 @@ snap_map |>
   geom_sf(mapping = aes(fill = snap_participation_rate)) +
   scale_fill_gradient(low = "#cfe8f3", high = "#062635") +
   theme_void()
-
-table(us_counties$STATE_NAME)
-
-table(snap_participation$state_name,snap_participation$year)
-
-colSums(is.na(snap_participation))
 
 ```
 
@@ -521,8 +515,8 @@ snap_2model <- snap_participation |>
   left_join(demographic_combined, by = c("GEOID", "year")) |>
   left_join(combined_poldb, by = c("state_fips", "year")) |>
   filter(snap_participation_rate < 1,
-       state_name %in% c("Alabama", "Arkansas", "Delaware", "District of Columbia", "Florida", "Georgia", 
-                         "Kentucky", "Louisiana", "Maryland", "Mississippi", "North Carolina", "South Carolina",
+       state_name %in% c("Alabama", "Arkansas", "Delaware", "District of Columbia", "Florida", "Georgia", "Louisiana",
+                         "Kentucky", "Louisiana", "Maryland", "Mississippi", "North Carolina", "Oklahoma", "South Carolina",
                          "Tennessee", "Texas", "Virginia", "West Virginia")) |> 
   select(-c(median_income_individual, state_name, NAME, snap_recipient_hh_prior12, snap_pct)) |>
   drop_na()
@@ -565,7 +559,7 @@ snap_train |> group_by(year) |> summarize(n = n())
 library(tidymodels)
 
 # set up folds
-snap_folds <- rolling_origin(snap_train, initial = 1343, assess = 1343, cumulative = FALSE)
+snap_folds <- rolling_origin(snap_train, initial = 1420, assess = 1420, cumulative = FALSE)
 
 snap_2019 <- snap_train |>
   filter(year==2019)
@@ -582,10 +576,28 @@ snap_lm_rec <-
                 bbce_asset == 0 ~ 1,
                 bbce_asset == -9 ~ 0
               ),
+              governor_is_democrat_1_yes = as.numeric(governor_is_democrat_1_yes),
               bbce_asset = factor(bbce_asset),
               abawdwaiver = factor(abawdwaiver)) |>
   step_dummy(all_nominal_predictors()) |>
   step_interact(terms = ~ unemployment_rate:starts_with("abawdwaiver") + poverty_pct:bbce_inclmt + median_household_income:bbce_inclmt)
+
+snap_knn_rec <- 
+  recipe(formula = snap_participation_rate ~ ., data = snap_train) |>
+    step_zv(all_predictors()) |>
+    step_rm(bbce) |>
+    update_role(GEOID, new_role = "id variable") |>
+    step_mutate(bbce_inclmt = if_else(bbce_inclmt == -9, 130, bbce_inclmt),
+              bbce_asset = case_when(
+                bbce_asset == 1 ~ 2,
+                bbce_asset == 0 ~ 1,
+                bbce_asset == -9 ~ 0
+              ),
+              governor_is_democrat_1_yes = as.numeric(governor_is_democrat_1_yes),
+              bbce_asset = factor(bbce_asset),
+              abawdwaiver = factor(abawdwaiver)) |>
+  step_normalize(all_numeric_predictors(), -c(snap_rate_acs, governor_is_democrat_1_yes)) |>
+  step_dummy(all_nominal_predictors())
 
 ```
 
@@ -600,7 +612,7 @@ lm_spec <- linear_reg(penalty = tune(),
 lm_grid <- grid_regular(penalty(), levels = 10)
 
 lm_wf <- workflow() |>
-  add_recipe(snap_rec) |>
+  add_recipe(snap_lm_rec) |>
   add_model(lm_spec)
 
 lm_res <- lm_wf |>
@@ -637,7 +649,7 @@ knn_spec <- nearest_neighbor(neighbors = tune()) |>
 
 knn_wf <- workflow() |>
   add_model(spec = knn_spec) |>
-  add_recipe(recipe = snap_rec)
+  add_recipe(recipe = snap_knn_rec)
 
 knn_grid <- grid_regular(neighbors(range = c(1, 15)), levels = 8)
 
@@ -665,7 +677,7 @@ rf_spec <- rand_forest(
 
 rf_wf <- workflow() |>
   add_model(rf_spec) |>
-  add_recipe(snap_rec)
+  add_recipe(snap_lm_rec)
 
 rf_res <- rf_wf |>
   fit_resamples(resamples = snap_folds)
