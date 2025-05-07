@@ -14,15 +14,15 @@ The intention of this project is to train a supervised machine learning model on
 
 **Census American Community Survey**: This data provides demographic information by county, along with SNAP participation rates that can be used to fill gaps where the FNS survey is incomplete.
 
-**Food and Nutrition Service Bi-Annual SNAP Participation Data**: This data provides county-specific information on the percentage of people receiving SNAP benefits.
+**Food and Nutrition Service Bi-Annual SNAP Participation Data**: This data provides county-specific information on the number of households receiving SNAP benefits.
 
 **USDA Rural Urban Continuum**: This data assigns a score for each county based on how rural or urban it is.
 
 **University of Kentucky Center for Poverty Research**: The National Welfare data from here provides economic information and information about the political landscape of each state.
 
-**Food and Nutrition Service SNAP Policy Database**: This database indicates whether a county has a work-waiver or asset limit for people receiving SNAP benefits.
+**Food and Nutrition Service SNAP Policy Database**: This database contains indicators for various state-level SNAP policies, including whether the state implements Broad-Based Categorical Eligibility, and the state's income and asset limits.
 
-**Center of Budget and Policy Priorities Waiver Data**: This provides data on D.C.'s SNAP requirements.
+**Center of Budget and Policy Priorities Waiver Data**: This provides data on states implementation of time-limit waivers for Able-Bodied Adults without Dependents.
 
 ## Analysis Structure
 
