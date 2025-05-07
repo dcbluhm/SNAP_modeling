@@ -968,18 +968,6 @@ predictions |>
 
 Differential error rates across different sectors of the population are crucial for researchers policymakers to consider when evaluating a model, as they may have ramifications on equity if policy decisions are made using the outputs of the model.
 
-## Relative Importance of Predictors in the Model
-
-The ten most important predictors in the model, measured by the absolute value of their coefficients in the elastic net regression, are displayed in the graph below. Seven out of the top ten are state dummy variables, with the top five all being state dummy variables. The remaining three are the percent of the population in poverty, the percent of the population that is white, and a dummy variable capturing whether or not the county's snap participation rate was imputed from ACS rather than pulled from the FNS data. Interestingly, none of the policy variables were found to have strong predictive power in this model. However, given the nature of the data, this is perhaps not surprising. The policy variables were all at the state level, so their predictive power may have been subsumed under the state dummy variables. Moreover, there was not a lot of variation in SNAP policies across states, which leads those variables to have less predictive power. If we had used a larger dataset (both in terms of years and the number of states), the policy predictors could have perhaps explained more of the variation.
-
-```{r}
-final_fit |>
-  extract_fit_parsnip() |>
-  vip(num_features = 10) +
-  labs(x = "Predictor", y = "Importance", title = "Relative Importance of Predictors")
-
-```
-
 ## Limitations
 The primary limitations of this project were time and computing power. Only having access to our personal laptops, we were not able to use samples as large or models as complex as we would have preferred. This likely contributed to the magnitude of the error rate, and potentially to the differential error rates, as we did not have sample sizes large enough to make accurate predictions for certain subsets of the population.
 
