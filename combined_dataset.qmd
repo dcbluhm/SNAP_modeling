@@ -217,8 +217,6 @@ table(snap_participation$state_name,snap_participation$year)
 
 colSums(is.na(snap_participation))
 
-view(snap_participation |> filter(snap_participation_rate > 1))
-
 ```
 
 ## Demographic and Economic Predictors
@@ -520,9 +518,12 @@ combined_poldb <- poldb |>
 snap_2model <- snap_participation |>
   left_join(demographic_combined, by = c("GEOID", "year")) |>
   left_join(combined_poldb, by = c("state_fips", "year")) |>
+  filter(snap_participation_rate < 1,
+       state_name %in% c("Alabama", "Arkansas", "Delaware", "District of Columbia", "Florida", "Georgia", 
+                         "Kentucky", "Louisiana", "Maryland", "Mississippi", "North Carolina", "South Carolina",
+                         "Tennessee", "Texas", "Virginia", "West Virginia")) |> 
   select(-c(median_income_individual, state_name, NAME, snap_recipient_hh_prior12, snap_pct)) |>
-  drop_na() |>
-  filter(snap_participation_rate < 1)
+  drop_na()
 
 county_observations <- snap_2model |>
   group_by(GEOID) |>
@@ -532,9 +533,11 @@ county_observations <- snap_2model |>
 snap_2model <- snap_2model |>
   anti_join(county_observations, by = c("GEOID"))
 
-rm(combined_poldb, county_observations, demographic_combined, fns_snap_county, fns_state_totals,
-   ky_welfare, poldb, poldb_2023, ruralurbancodes2013, ruralurbancodes2023, snap_2015,
-   snap_2016, snap_2017, snap_2018, snap_2019, snap_2023, snap_participation, state_fips, us_counties)
+# Remove extraneous dataframes to save memory
+rm(abawd_waivers, acs_inflators, acs_snap_county, acs_snap_county_infl, acs_state_totals, acs_years, census_urban_rural, 
+   census_vars, combined_census, combined_poldb, county_observations, demographic_combined, fns_snap_county, fns_state_totals,
+   ky_welfare, poldb, poldb_2023, ruralurbancodes2013, ruralurbancodes2023, snap_2015, snap_2016, snap_2017, snap_2018, 
+   snap_2019, snap_2023, snap_participation, state_fips, us_counties, snap_map)
 
 ```
 
@@ -560,12 +563,16 @@ snap_train |> group_by(year) |> summarize(n = n())
 library(tidymodels)
 
 # set up folds
-snap_folds <- rolling_origin(snap_train, initial = 3119, assess = 3119, cumulative = FALSE)
+snap_folds <- rolling_origin(snap_train, initial = 1343, assess = 1343, cumulative = FALSE)
+
+snap_2019 <- snap_train |>
+  filter(year==2019)
 
 # create recipe
-snap_rec <- 
+snap_lm_rec <- 
   recipe(formula = snap_participation_rate ~ ., data = snap_train) |>
     step_zv(all_predictors()) |>
+    step_rm(bbce) |>
     update_role(GEOID, new_role = "id variable") |>
     step_mutate(bbce_inclmt = if_else(bbce_inclmt == -9, 130, bbce_inclmt),
               bbce_asset = case_when(
@@ -575,14 +582,12 @@ snap_rec <-
               ),
               bbce_asset = factor(bbce_asset),
               abawdwaiver = factor(abawdwaiver)) |>
-  step_interact(terms = ~ poverty_pct:bbce_inclmt + median_household_income:bbce_inclmt) |> 
-  step_normalize(all_numeric_predictors(), -c(snap_rate_acs, rural_urban_score, governor_is_democrat_1_yes, bbce)) |>
   step_dummy(all_nominal_predictors()) |>
-  step_interact(terms = ~ unemployment_rate:starts_with("abawdwaiver"))
+  step_interact(terms = ~ unemployment_rate:starts_with("abawdwaiver") + poverty_pct:bbce_inclmt + median_household_income:bbce_inclmt)
 
 ```
 
-Linear Regression Electric Net
+Linear Regression Elastic Net
 
 ```{r}
 lm_spec <- linear_reg(penalty = tune(),
@@ -591,7 +596,6 @@ lm_spec <- linear_reg(penalty = tune(),
   set_mode("regression")
 
 lm_grid <- grid_regular(penalty(), levels = 10)
-
 
 lm_wf <- workflow() |>
   add_recipe(snap_rec) |>
@@ -603,13 +607,22 @@ lm_res <- lm_wf |>
             metrics = metric_set(rmse, mae))
 
 lm_res |>
-  collect_metrics()
+  collect_metrics() #|>
+#  write.csv("lm_res_metrics.csv", row.names = FALSE)
 
 lm_res |>
   autoplot()
 
 lm_best <- lm_res |>
-  select_best("rmse")
+  select_best(metric = "rmse")
+
+#saveRDS(lm_res, file = "lm_res.rds")
+
+lm_wf |>
+  finalize_workflow(lm_best) |>
+  fit(snap_2019) |>
+  extract_fit_parsnip() |>
+  tidy()
 
 ```
 
