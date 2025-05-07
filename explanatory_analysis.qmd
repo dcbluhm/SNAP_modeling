@@ -558,24 +558,190 @@ snap_train <- snap_2model |>
 
 ```{r}
 national_avg <- snap_2model |>
+  filter(year <= 2019) |>  # <-- Filter data up to 2019
   group_by(year) |>
   summarize(national_avg_rate = mean(snap_participation_rate, na.rm = TRUE))
 
-
- ggplot(national_avg, aes(x = year, y = national_avg_rate)) +
+ggplot(national_avg, aes(x = year, y = national_avg_rate)) +
   geom_line(size = 1.2, color = "darkblue") +
   geom_point(color = "darkred") +
   labs(
-    title = "National Average SNAP Participation Rate by Year",
+    title = "National Average SNAP Participation Rate by Year (Up to 2019)",
     x = "Year", y = "Average Participation Rate"
   ) +
   theme_minimal()
 
+```
+
+
+```{r}
+library(ggplot2)
+
+snap_map |>
+  filter(year == 2019) |>
+  ggplot() +
+  geom_sf(aes(fill = snap_participation_rate), color = NA) +
+  scale_fill_gradient(low = "#cfe8f3", high = "#062635", na.value = "grey90") +
+  labs(title = "SNAP Participation Rate by County (2019)",
+       fill = "Participation Rate") +
+  theme_void() +
+  theme(legend.position = "bottom")
+
+```
+
+
+
+### Find highest and lowest participation states per year
+
+```{r}
+# Get highest and lowest states
+state_extremes <- snap_2model |>
+  group_by(year, state_name) |>
+  summarize(state_avg = mean(snap_participation_rate, na.rm = TRUE), .groups = "drop") |>
+  group_by(year) |>
+  summarize(
+    highest_state = state_name[which.max(state_avg)],
+    highest_state_rate = max(state_avg, na.rm = TRUE),
+    lowest_state = state_name[which.min(state_avg)],
+    lowest_state_rate = min(state_avg, na.rm = TRUE)
+  )
+
+# Get highest and lowest counties
+county_extremes <- snap_2model |>
+  group_by(year, NAME) |>
+  summarize(county_avg = mean(snap_participation_rate, na.rm = TRUE), .groups = "drop") |>
+  group_by(year) |>
+  summarize(
+    highest_county = NAME[which.max(county_avg)],
+    highest_county_rate = max(county_avg, na.rm = TRUE),
+    lowest_county = NAME[which.min(county_avg)],
+    lowest_county_rate = min(county_avg, na.rm = TRUE)
+  )
+
+# Combine both into one table
+combined_extremes <- left_join(state_extremes, county_extremes, by = "year")
+
+print(combined_extremes)
 
 ```
 
 ```{r}
-# Find highest and lowest participation states per year
+zero_participation_list <- snap_2model |>
+  filter(snap_participation_rate == 0) |>
+  select(year, NAME, state_name, snap_participation_rate) |>
+  arrange(year, state_name, NAME)
+
+print(zero_participation_list)
+
+```
+
+
+```{r}
+
+# Summarize counties with participation rate > 50%
+over_50_summary <- snap_2model |>
+  filter(!is.na(snap_participation_rate)) |>
+  group_by(year) |>
+  summarize(
+    total_counties = n(),
+    counties_over_50 = sum(snap_participation_rate > 0.50),
+    percent_over_50 = round(100 * counties_over_50 / total_counties, 2),
+    .groups = "drop"
+  )
+
+print(over_50_summary)
+
+```
+
+```{r}
+snap_income_brackets <- snap_2model |>
+  filter(!is.na(median_household_income)) |>
+  mutate(income_group = case_when(
+    median_household_income < 30000 ~ "<$30k",
+    median_household_income >= 30000 & median_household_income < 40000 ~ "$30k–39k",
+    median_household_income >= 40000 & median_household_income < 50000 ~ "$40k–49k",
+    median_household_income >= 50000 & median_household_income < 60000 ~ "$50k–59k",
+    median_household_income >= 60000 & median_household_income < 70000 ~ "$60k–69k",
+    median_household_income >= 70000 ~ "≥$70k"
+  )) |>
+  group_by(income_group) |>
+  summarize(
+    avg_snap_rate = mean(snap_participation_rate, na.rm = TRUE),
+    median_income = mean(median_household_income, na.rm = TRUE),
+    n_counties = n(),
+    .groups = "drop"
+  ) |>
+  mutate(
+    percent_of_counties = round(100 * n_counties / sum(n_counties), 1)
+  ) |>
+  arrange(desc(avg_snap_rate))
+
+print(snap_income_brackets)
+
+```
+
+```{r}
+
+snap_summary_by_year <- snap_2model |>
+  group_by(year) |>
+  summarize(
+    min_white_pct = min(white_pct, na.rm = TRUE),
+    max_white_pct = max(white_pct, na.rm = TRUE),
+    min_median_income = min(median_household_income, na.rm = TRUE),
+    max_median_income = max(median_household_income, na.rm = TRUE),
+    min_poverty_pct = min(poverty_pct, na.rm = TRUE),
+    max_poverty_pct = max(poverty_pct, na.rm = TRUE),
+    .groups = "drop"
+  )
+
+print(snap_summary_by_year)
+
+```
+
+
+
+```{r}
+
+zero_participation_summary <- snap_2model |>
+  filter(snap_participation_rate == 0) |>
+  group_by(year) |>
+  summarize(num_counties_zero_rate = n(), .groups = "drop")
+
+print(zero_participation_summary)
+
+```
+
+
+
+```{r}
+# Step 1: Calculate national average per year
+national_avg <- snap_2model |>
+  group_by(year) |>
+  summarize(national_avg_rate = mean(snap_participation_rate, na.rm = TRUE), .groups = "drop")
+
+# Step 2: Join the national average back to the dataset
+snap_with_avg <- snap_2model |>
+  left_join(national_avg, by = "year")
+
+# Step 3: Count total counties and those above the average
+above_avg_summary <- snap_with_avg |>
+  group_by(year) |>
+  summarize(
+    total_counties = n(),
+    counties_above_avg = sum(snap_participation_rate > national_avg_rate),
+    percent_above_avg = round(100 * counties_above_avg / total_counties, 1),
+    .groups = "drop"
+  )
+
+print(above_avg_summary)
+
+
+```
+
+
+
+
+```{r}
 state_extremes <- snap_2model |>
   group_by(year, state_name) |>
   summarize(state_avg = mean(snap_participation_rate, na.rm = TRUE), .groups = "drop") |>
@@ -596,26 +762,8 @@ print(state_extremes)
 
 ```
 
-```{r}
-library(tidyverse)
 
-snap_2model %>%
-  select(snap_participation_rate, poverty_pct, renter_pct, unemployment_rate, over_65_pct) %>%
-  pivot_longer(cols = c(poverty_pct, renter_pct, unemployment_rate, over_65_pct),
-               names_to = "predictor", values_to = "value") %>%
-  ggplot(aes(x = value, y = snap_participation_rate)) +
-  geom_point(alpha = 0.3) +
-  geom_smooth(method = "lm", color = "blue") +
-  facet_wrap(~ predictor, scales = "free_x") +
-  labs(title = "Predictor Variables vs SNAP Participation Rate",
-       x = "Predictor Value", y = "SNAP Participation Rate") +
-  theme_minimal()
-
-```
-
-
-
-
+### Z-score standardize selected predictors
 ```{r}
 library(tidyverse)
 
@@ -646,22 +794,6 @@ ggplot(plot_df, aes(x = value, y = snap_participation_rate)) +
 
 ```
 
-
-
-```{r}
-library(ggplot2)
-
-snap_map %>%
-  filter(year == 2019) %>%
-  ggplot() +
-  geom_sf(aes(fill = snap_participation_rate), color = NA) +
-  scale_fill_gradient(low = "#cfe8f3", high = "#062635", na.value = "grey90") +
-  labs(title = "SNAP Participation Rate by County (2019)",
-       fill = "Participation Rate") +
-  theme_void() +
-  theme(legend.position = "bottom")
-
-```
 
 
 ```{r}
@@ -704,6 +836,10 @@ ggplot(snap_2model, aes(x = disabled_pct, y = snap_participation_rate)) +
 
 ```
 
+
+```{r}
+
+```
 
 ## Training models
 
