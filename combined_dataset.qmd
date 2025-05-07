@@ -565,10 +565,9 @@ snap_2019 <- snap_train |>
   filter(year==2019)
 
 # create recipe
-snap_lm_rec <- 
+snap_rec <- 
   recipe(formula = snap_participation_rate ~ ., data = snap_train) |>
     step_zv(all_predictors()) |>
-    step_rm(bbce) |>
     update_role(GEOID, new_role = "id variable") |>
     step_mutate(bbce_inclmt = if_else(bbce_inclmt == -9, 130, bbce_inclmt),
               bbce_asset = case_when(
@@ -576,28 +575,12 @@ snap_lm_rec <-
                 bbce_asset == 0 ~ 1,
                 bbce_asset == -9 ~ 0
               ),
-              governor_is_democrat_1_yes = as.numeric(governor_is_democrat_1_yes),
               bbce_asset = factor(bbce_asset),
               abawdwaiver = factor(abawdwaiver)) |>
+  step_interact(terms = ~ poverty_pct:bbce_inclmt + median_household_income:bbce_inclmt) |> 
+  step_normalize(all_numeric_predictors(), -c(snap_rate_acs, rural_urban_score, governor_is_democrat_1_yes, bbce)) |>
   step_dummy(all_nominal_predictors()) |>
-  step_interact(terms = ~ unemployment_rate:starts_with("abawdwaiver") + poverty_pct:bbce_inclmt + median_household_income:bbce_inclmt)
-
-snap_knn_rec <- 
-  recipe(formula = snap_participation_rate ~ ., data = snap_train) |>
-    step_zv(all_predictors()) |>
-    step_rm(bbce) |>
-    update_role(GEOID, new_role = "id variable") |>
-    step_mutate(bbce_inclmt = if_else(bbce_inclmt == -9, 130, bbce_inclmt),
-              bbce_asset = case_when(
-                bbce_asset == 1 ~ 2,
-                bbce_asset == 0 ~ 1,
-                bbce_asset == -9 ~ 0
-              ),
-              governor_is_democrat_1_yes = as.numeric(governor_is_democrat_1_yes),
-              bbce_asset = factor(bbce_asset),
-              abawdwaiver = factor(abawdwaiver)) |>
-  step_normalize(all_numeric_predictors(), -c(snap_rate_acs, governor_is_democrat_1_yes)) |>
-  step_dummy(all_nominal_predictors())
+  step_interact(terms = ~ unemployment_rate:starts_with("abawdwaiver"))
 
 ```
 
@@ -612,7 +595,7 @@ lm_spec <- linear_reg(penalty = tune(),
 lm_grid <- grid_regular(penalty(), levels = 10)
 
 lm_wf <- workflow() |>
-  add_recipe(snap_lm_rec) |>
+  add_recipe(snap_rec) |>
   add_model(lm_spec)
 
 lm_res <- lm_wf |>
@@ -649,7 +632,7 @@ knn_spec <- nearest_neighbor(neighbors = tune()) |>
 
 knn_wf <- workflow() |>
   add_model(spec = knn_spec) |>
-  add_recipe(recipe = snap_knn_rec)
+  add_recipe(recipe = snap_rec)
 
 knn_grid <- grid_regular(neighbors(range = c(1, 15)), levels = 8)
 
@@ -677,7 +660,7 @@ rf_spec <- rand_forest(
 
 rf_wf <- workflow() |>
   add_model(rf_spec) |>
-  add_recipe(snap_lm_rec)
+  add_recipe(snap_rec)
 
 rf_res <- rf_wf |>
   fit_resamples(resamples = snap_folds)
