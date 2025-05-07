@@ -1,0 +1,712 @@
+---
+title: "Combined dataset"
+format: html
+editor: visual
+---
+
+## SNAP Participation Rates
+
+NOTE: CT changed how their counties are organized, so the county groupings from 2015-2019 no longer seem to apply - can ask Alena about this, but seems like we may just want to drop. AK also added a county, but it seems like most of them are still the same, so it should be ok to include.
+
+```{r message=FALSE, warning=FALSE}
+
+library(tidyverse)
+library(readxl)
+library(janitor)
+library(lubridate)
+library(stringr)
+library(tidycensus)
+library(tigris)
+library(sf)
+library(ggplot2)
+
+# Silence messages from tidycensus
+options(tidycensus.quiet = TRUE)
+
+```
+
+```{r}
+counties_filepath <- "data/snap-zip-fns388a-4"
+counties_filelist <- list.files(path = counties_filepath, pattern = "\\.xlsx?$", full.names = TRUE)
+
+```
+
+```{r}
+
+# function to read in SNAP county data files downloaded from FNS
+read_snap_file <- function(file_path) {
+  snap_df <- read_excel(file_path, skip = 3) |> clean_names()
+  snap_df <- snap_df %>% select(-matches("^\\.\\.\\.|^x\\d+$"))  # drop empty columns
+
+  file_name <- basename(file_path)
+  file_month <- str_extract(file_name, "^[A-Za-z]+(?=\\s*\\d{4})")
+  year <- str_extract(file_name, "\\d{4}(?=\\.)") %>% as.numeric()
+  
+  snap_df <- snap_df |>
+    mutate(
+      month = case_when(
+        file_month == "JUL" ~ 7,
+        file_month == "Jul" ~ 7,
+        file_month == "July" ~ 7,
+        TRUE ~ 1
+      ),
+      year = year,
+      state_code = str_sub(substate_region, 1, 2),
+      county_code = str_sub(substate_region, 3, 5),
+      GEOID = str_sub(substate_region, 1, 5)
+    ) %>%
+    select(
+      year, month, GEOID, state_code, county_code,
+      calc_snap_total_pa_and_non_pa_households
+    ) |>
+    group_by(year, month, state_code, county_code, GEOID) |>
+    summarize(fns_snap_households = sum(calc_snap_total_pa_and_non_pa_households)) |>
+    filter(!str_detect(state_code, "\\D"))
+
+  return(snap_df)
+}
+
+```
+
+```{r}
+
+fns_snap_county <- map_dfr(counties_filelist, possibly(read_snap_file, otherwise = NULL)) %>%
+  mutate(year = as.numeric(year)) %>%  
+  filter(year %in% c(2015,2016,2017,2018,2019,2023)) |>
+  group_by(year, GEOID, state_code, county_code) |>
+  summarize(fns_snap_households = round(mean(fns_snap_households)))
+
+snap_all <- map_dfr(counties_filelist, possibly(read_snap_file, otherwise = NULL))
+table(snap_all$year, snap_all$month)
+
+```
+
+```{r}
+
+# function to read in SNAP state totals downloaded from FNS
+read_state_totals <- function(file_path) {
+  filename <- basename(file_path)
+  FY <- as.numeric(str_extract(filename, "(?<=FY)\\d{2}"))
+  FY <- 2000 + FY
+  if (FY > 2019) {
+    rows_list <- list(
+      NERO = c("A8:B20", "A23:B35", "A38:B50", "A53:B65", "A68:B80", "A83:B95", "A98:B110"), 
+      MARO = c("A8:B20", "A23:B35", "A38:B50", "A53:B65", "A68:B80", "A98:B110", "A113:B125"), 
+      SERO = c("A8:B20", "A23:B35", "A38:B50", "A53:B65", "A68:B80", "A83:B95", "A98:B110", "A113:B125"), 
+      MWRO = c("A8:B20", "A23:B35", "A38:B50", "A53:B65", "A68:B80", "A83:B95", "A98:B110"), 
+      SWRO = c("A8:B20", "A23:B35", "A38:B50", "A53:B65", "A68:B80", "A83:B95", "A98:B110"), 
+      MPRO = c("A8:B20", "A23:B35", "A38:B50", "A53:B65", "A68:B80", "A83:B95", "A98:B110", "A113:B125"), 
+      WRO = c("A8:B20", "A38:B50", "A68:B80", "A83:B95", "A98:B110", "A113:B125", "A128:B140"))
+  
+  } else if (FY %in% c(2015, 2016)) {
+    rows_list <- list(
+      NERO = c("A8:B20", "A23:B35", "A38:B50", "A53:B65", "A68:B80", "A83:B95", "A98:B110"), 
+      MARO = c("A8:B20", "A23:B35", "A38:B50", "A53:B65", "A68:B80", "A85:B97", "A115:B127"), 
+      SERO = c("A8:B20", "A23:B35", "A38:B50", "A53:B65", "A68:B80", "A83:B95", "A98:B110", "A113:B125"), 
+      MWRO = c("A8:B20", "A23:B35", "A38:B50", "A53:B65", "A68:B80", "A83:B95"), 
+      SWRO = c("A8:B20", "A23:B35", "A38:B50", "A53:B65", "A68:B80"), 
+      MPRO = c("A8:B20", "A23:B35", "A38:B50", "A53:B65", "A68:B80", "A83:B95", "A98:B110", "A113:B125", "A128:B140", "A143:B155"), 
+      WRO = c("A8:B20", "A25:B37", "A40:B52", "A70:B82", "A85:B97", "A100:B112", "A115:B127", "A130:B142"))
+
+  } else {
+    rows_list <- list(
+      NERO = c("A8:B20", "A23:B35", "A38:B50", "A53:B65", "A68:B80", "A83:B95", "A98:B110"), 
+      MARO = c("A8:B20", "A23:B35", "A38:B50", "A53:B65", "A68:B80", "A85:B97", "A100:B112"), 
+      SERO = c("A8:B20", "A23:B35", "A38:B50", "A53:B65", "A68:B80", "A83:B95", "A98:B110", "A113:B125"), 
+      MWRO = c("A8:B20", "A23:B35", "A38:B50", "A53:B65", "A68:B80", "A83:B95", "A98:B110"), 
+      SWRO = c("A8:B20", "A23:B35", "A38:B50", "A53:B65", "A68:B80", "A83:B95", "A98:B110"), 
+      MPRO = c("A8:B20", "A23:B35", "A38:B50", "A53:B65", "A68:B80", "A83:B95", "A98:B110", "A113:B125"), 
+      WRO = c("A8:B20", "A25:B37", "A55:B67", "A70:B82", "A85:B97", "A100:B112", "A115:B127"))
+  }
+  
+  map_dfr(names(rows_list), function(sheet_name) {
+    ranges <- rows_list[[sheet_name]]
+
+    map_dfr(ranges, function(range) {
+      df <- read_excel(file_path, sheet = sheet_name, range = range, col_names = FALSE)
+
+      df <- df |>
+        setNames(c("month", "households")) |>
+        mutate(
+          state_name = month[1],
+          year = str_extract(month, "20\\d{2}"),
+          month = str_sub(month, 1, 3)
+        ) |>
+        filter(!is.na(households))
+
+      return(df)
+    })
+  })
+}
+
+state_filepath <- "data/snap_state_totals"
+state_filelist <- list.files(path = state_filepath, pattern = "\\.xlsx?$", full.names = TRUE)
+
+fns_state_totals <- map_dfr(state_filelist, read_state_totals) |>
+  filter(!year %in% c(2014, 2020, 2022, 2024)) |>
+  group_by(year, state_name) |>
+  summarize(fns_snap_households = round(mean(households)))
+
+
+  
+```
+
+```{r}
+
+# pull in SNAP data from ACS
+acs_years <- list(2015, 2016, 2017, 2018, 2019, 2023)
+
+acs_snap_county <- map_dfr(
+  acs_years, 
+  ~get_acs(
+    geography = "county",
+    variables = c(
+      total_households = "B19058_001",
+      acs_snap_households  = "B19058_002"
+    ),
+    year = .x,
+    survey = "acs5",
+    geometry = FALSE,
+    cache_table = TRUE
+  ) |> mutate(year = .x)) |>
+  select(year, GEOID, NAME, variable, estimate) |>
+  pivot_wider(names_from = variable, values_from = estimate) |>
+  mutate(
+    acs_snap_rate = acs_snap_households / total_households,
+    state_fips = str_sub(GEOID, 1, 2)
+  ) |>
+  filter(!state_fips %in% c("60", "66", "69", "72", "78"))
+
+acs_state_totals <- acs_snap_county |>
+  group_by(year, state_fips) |>
+  summarize(acs_snap_households = sum(acs_snap_households))
+
+state_fips <- fips_codes |>
+  select(state_code, state_name) |>
+  distinct(state_code, .keep_all = TRUE)
+
+acs_inflators <- fns_state_totals |>
+  left_join(state_fips, by = "state_name") |>
+  mutate(year = as.numeric(year)) |>
+  left_join(acs_state_totals, by = c("state_code" = "state_fips", "year" = "year")) |>
+  group_by(year, state_code) |>
+  mutate(inflator = fns_snap_households/acs_snap_households) |>
+  select(year, state_name, state_code, inflator)
+
+acs_snap_county_infl <- acs_snap_county |>
+  left_join(acs_inflators, by = c("state_fips" = "state_code", "year" = "year")) |>
+  mutate(acs_snap_rate_infl = acs_snap_rate*inflator)
+
+snap_participation <- acs_snap_county_infl |>
+  full_join(fns_snap_county, by = c("GEOID", "year")) |>
+  mutate(fns_snap_rate = fns_snap_households/total_households,
+         snap_participation_rate = if_else(!is.na(fns_snap_rate), fns_snap_rate, acs_snap_rate_infl),
+         snap_rate_acs = if_else(!is.na(fns_snap_rate), 0, 1)) |>
+  select(year, GEOID, state_name, snap_participation_rate, snap_rate_acs)
+
+us_counties <- counties(cb = TRUE) |>
+  filter(!STATEFP %in% c("60", "66", "69", "72", "78", "02", "15"))
+
+snap_map <- us_counties |>
+  left_join(snap_participation, by = "GEOID")
+
+snap_map |>
+  filter(year == 2015) |>
+  ggplot() +
+  geom_sf(mapping = aes(fill = snap_participation_rate)) +
+  scale_fill_gradient(low = "#cfe8f3", high = "#062635") +
+  theme_void()
+
+table(us_counties$STATE_NAME)
+
+table(snap_participation$state_name,snap_participation$year)
+
+```
+
+## Demographic and Economic Predictors
+
+```{r}
+#Census Data
+#######
+census_vars <- tidycensus::load_variables(year = 2016,
+                                          dataset = c("acs5"))
+
+#B06011_001E is median income
+#B19013_001 is median household income in past 12 months (colinearity w/median income?)
+#B01001_001E is total population
+#B01001_002E is number of males
+#B17001_002E is number below poverty line
+#B01002_001 is median age (total)
+#B03002_003 is total number of non-hispanic white (_001 is overall)
+#B15003_017 to _025 is education attainment levels
+#B11001_002 is number of family households (_001 is overall)
+#B18101_001 is total number disabled status
+      #_004,_007, etc are number that are disabled for age/sex groups
+#B25003_003 is total number of renters (_001 is overall)
+#B22001_002 is total number of households that received food stamps in prior 12 months (_001 is overall)
+#B05001_006 is total number of non-citizens (_001 is overall)
+#B01001_020-25 and _044-049 is total over 65 (_001 is overall)
+
+
+get_snap <- function(year) {
+  
+  available_vars <- load_variables(year, "acs5", cache = TRUE)$name
+  
+  snap_vars <- c("B06011_001E", "B01001_001E", "B01001_002E",
+                      "B17001_002E", "B17001_001E", "B19013_001",
+                      "B01002_001", "B03002_003", "B03002_001",
+                      "B15003_001", "B15003_017", "B15003_018", "B15003_019",
+                      "B15003_020", "B15003_021", "B15003_022",
+                      "B15003_023", "B15003_024", "B15003_025",
+                      "B11001_002", "B11001_001", "B25003_003",
+                      "B25003_001", "B18101_001", "B22001_002", "B22001_001",
+                 "B18101_004", "B18101_007", "B18101_010", "B18101_013",
+                 "B18101_016", "B18101_019", "B18101_022", "B18101_025",
+                 "B18101_028", "B18101_031", "B05001_006", "B05001_001",
+                 "B01001_020", "B01001_021", "B01001_022", "B01001_023",
+                 "B01001_024", "B01001_025", "B01001_044", "B01001_045",
+                 "B01001_046", "B01001_047", "B01001_048", "B01001_049")
+  
+  snap_vars_nosuffix <- gsub("E$", "", snap_vars)
+  
+  usable_vars <- intersect(snap_vars_nosuffix, available_vars)
+  
+  if (length(usable_vars) == 0) {
+    warning(paste0("No matching variables available for year ", year))
+    return(NULL)
+  }
+  
+  census_demo <- get_acs(geography = "county",
+                         variables = usable_vars,
+                         year = year,
+                         survey = "acs5",
+                         output = "tidy",
+                         progress_bar = FALSE) |>
+    mutate(year = year) |>
+    mutate(variable = case_when(
+      variable == "B06011_001" ~ "median_income_individual",
+      variable == "B01001_001" ~ "total_population",
+      variable == "B01001_002" ~ "male_population",
+      variable == "B17001_002" ~ "below_poverty",
+      variable == "B17001_001" ~ "poverty_total",
+      variable == "B19013_001"  ~ "median_household_income",
+      variable == "B01002_001"  ~ "median_age",
+      variable == "B03002_003"  ~ "white_alone",
+      variable == "B03002_001"  ~ "total_race_population",
+      variable == "B15003_001"  ~ "total_educ",
+      variable == "B15003_017"  ~ "hs_grad",
+      variable == "B15003_018"  ~ "ged",
+      variable == "B15003_019"  ~ "some_college_less_1yr",
+      variable == "B15003_020"  ~ "some_college",
+      variable == "B15003_021"  ~ "assoc_degree",
+      variable == "B15003_022"  ~ "bachelors_degree",
+      variable == "B15003_023"  ~ "masters_degree",
+      variable == "B15003_024"  ~ "professional_degree",
+      variable == "B15003_025"  ~ "doctoral_degree",
+      variable == "B11001_002"  ~ "family_households",
+      variable == "B11001_001"  ~ "total_households",
+      variable == "B25003_003"  ~ "renter_occupied",
+      variable == "B25003_001"  ~ "total_occupied_housing",
+      variable == "B18101_001"  ~ "total_disability_universe",
+      variable == "B22001_002"  ~ "snap_recipient_hh_prior12",
+      variable == "B22001_001"  ~ "total_snap_universe",
+      variable == "B05001_006" ~ "non_citizens",
+      variable == "B05001_001" ~ "non_citizens_universe",
+      TRUE ~ variable  # keep original name if no match
+    ))
+  
+  census_wide <- census_demo |>
+    select(GEOID, NAME, year, variable, estimate) |>
+    pivot_wider(names_from = "variable",
+                values_from = "estimate")
+  
+  census_wide <- census_wide |>
+    mutate(male_pct = (male_population/total_population),
+           white_pct = (white_alone/total_race_population),
+           family_pct = (family_households/total_households),
+           bachelor_or_higher_pct = ((bachelors_degree + masters_degree + 
+                                        professional_degree + doctoral_degree)/
+                                       total_educ),
+           poverty_pct = (below_poverty/poverty_total),
+           disabled_pct = ((B18101_004 + B18101_007 + B18101_010 + B18101_013 +
+                             B18101_016 + B18101_019 + B18101_022 + B18101_025 +
+                             B18101_028 + B18101_031)/total_disability_universe),
+           snap_pct = (snap_recipient_hh_prior12/total_snap_universe),
+           renter_pct = (renter_occupied/total_occupied_housing),
+           non_citizen_pct = (non_citizens/non_citizens_universe),
+           over_65_pct = ((B01001_020 + B01001_021 + B01001_022 + B01001_023 + 
+                             B01001_024 + B01001_025 + B01001_044 + B01001_045 +
+                             B01001_046 + B01001_047 + B01001_048 + B01001_049)/
+                            total_population)) |>
+    select(GEOID, NAME, year, male_pct, median_age, white_pct, family_pct, bachelor_or_higher_pct,
+           poverty_pct, disabled_pct, snap_pct, renter_pct, median_age,
+           median_income_individual, median_household_income, 
+           snap_recipient_hh_prior12, non_citizen_pct, over_65_pct)
+           
+  
+  assign(paste0("snap_", year), census_wide, envir = .GlobalEnv)
+}
+
+years <- c(2015, 2016, 2017, 2018, 2019, 2023)
+
+map(.x = years, .f = get_snap)
+
+
+combined_census <- bind_rows(snap_2015, snap_2016, snap_2017, snap_2018, 
+                             snap_2019, snap_2023) |>
+  arrange(GEOID)
+#######
+
+#USDA Rural-Urban Data
+#######
+ruralurbancodes2013 <- read_excel("data/ruralurbancodes2013.xls")
+ruralurbancodes2023 <- read_excel("data/Ruralurbancontinuumcodes2023.xlsx")
+
+ruralurbancodes2013 <- ruralurbancodes2013 |>
+  rename(GEOID = FIPS)
+
+ruralurbancodes2023 <- ruralurbancodes2023 |>
+  rename(GEOID = FIPS)
+
+census_urban_rural <- combined_census |>
+  left_join(ruralurbancodes2013 |>
+              select(GEOID, RUCC_2013), by = "GEOID") |>
+  left_join(ruralurbancodes2023 |>
+              select(GEOID, RUCC_2023), by = "GEOID") |>
+  mutate(rural_urban_score = case_when(
+    year == 2023 ~ RUCC_2023,
+    TRUE ~ RUCC_2013)) |>
+  select(-RUCC_2013, -RUCC_2023)
+######
+
+#Univ Kentucky Welfare Data
+######
+ky_welfare <- read_excel("data/UKCPR_National_Welfare_Data_1980_2023.xlsx", 
+                         sheet = "Data", 
+                         col_types = c("text", 
+                                       "numeric", "numeric", "numeric", 
+                                       "numeric", "numeric", "numeric", 
+                                       "numeric", "numeric", "numeric", 
+                                       "numeric", "numeric", "numeric", 
+                                       "numeric", "numeric", "numeric", 
+                                       "numeric", "numeric", "numeric", 
+                                       "numeric", "numeric", "numeric", 
+                                       "numeric", "numeric", "numeric", 
+                                       "numeric", "numeric", "numeric", 
+                                       "numeric", "numeric", "numeric", 
+                                       "numeric", "numeric", "numeric", 
+                                       "numeric", "numeric", "numeric", 
+                                       "text", "numeric", "numeric", "numeric", 
+                                       "numeric", "numeric", "numeric", 
+                                       "numeric", "numeric", "numeric", 
+                                       "numeric", "numeric", "numeric", 
+                                       "numeric", "numeric", "numeric", 
+                                       "numeric", "numeric", "numeric", 
+                                       "numeric", "numeric", "numeric", 
+                                       "numeric", "numeric", "numeric", 
+                                       "numeric", "numeric", "numeric", 
+                                       "numeric", "numeric", "numeric", 
+                                       "numeric", "numeric", "numeric", 
+                                       "numeric", "numeric", "numeric")) |>
+  janitor::clean_names()
+
+ky_welfare <- ky_welfare |>
+  filter(year %in% c(2015,2016,2017,2018,2019,2023)) |>
+  mutate(state_fips = str_pad(state_fips, width = 2, side = "left", pad = "0")) |>
+  select(state_fips, year, unemployment_rate, marginally_food_insecure, food_insecure,
+         very_low_food_secure, gross_state_product, governor_is_democrat_1_yes,
+         fraction_of_state_house_that_is_democrat, fraction_of_state_senate_that_is_democrat,
+         state_minimum_wage)
+
+census_urban_rural <- census_urban_rural |>
+  mutate(state_fips = substr(GEOID, 1, 2))
+
+demographic_combined <-  census_urban_rural |>
+  left_join(ky_welfare, by = c("state_fips", "year")) 
+
+#Last cleaning details and Exploration
+#####
+View(demographic_combined |>
+  filter(is.na(governor_is_democrat_1_yes))) #All DC and PR
+
+demographic_combined <- demographic_combined |>
+  filter(state_fips != 72) #Filtering out PR
+
+#Manually imputing 1 to reflect DC's Democratic mayor each year
+demographic_combined <- demographic_combined |>
+  mutate(governor_is_democrat_1_yes = ifelse(GEOID == "11001", 1, governor_is_democrat_1_yes))
+
+demographic_combined <- demographic_combined |>
+  mutate(fraction_of_state_house_that_is_democrat = ifelse(
+    GEOID == "11001", 1, fraction_of_state_house_that_is_democrat))
+
+#Manually imputing Nebraska's unicameral makeup to both state house and senate pct
+#Though technically nonpartisan, data on party endorsements of candidates is used
+demographic_combined <- demographic_combined |>
+  mutate(fraction_of_state_house_that_is_democrat = ifelse(
+    state_fips == "31" & year %in% c(2015, 2016), 12/49, 
+    fraction_of_state_house_that_is_democrat))
+
+demographic_combined <- demographic_combined |>
+  mutate(fraction_of_state_senate_that_is_democrat = ifelse(
+    state_fips == "31" & year %in% c(2015, 2016), 12/49, 
+    fraction_of_state_senate_that_is_democrat))
+
+demographic_combined <- demographic_combined |>
+  mutate(fraction_of_state_house_that_is_democrat = ifelse(
+    state_fips == "31" & year %in% c(2017, 2018, 2019), 15/49, 
+    fraction_of_state_house_that_is_democrat))
+
+demographic_combined <- demographic_combined |>
+  mutate(fraction_of_state_senate_that_is_democrat = ifelse(
+    state_fips == "31" & year %in% c(2017, 2018, 2019), 15/49, 
+    fraction_of_state_senate_that_is_democrat))
+
+demographic_combined <- demographic_combined |>
+  mutate(fraction_of_state_house_that_is_democrat = ifelse(
+    state_fips == "31" & year %in% c(2023), 17/49, 
+    fraction_of_state_house_that_is_democrat))
+
+demographic_combined <- demographic_combined |>
+  mutate(fraction_of_state_senate_that_is_democrat = ifelse(
+    state_fips == "31" & year %in% c(2023), 17/49, 
+    fraction_of_state_senate_that_is_democrat))
+
+```
+
+## SNAP Policy Predictors
+
+```{r}
+library(readxl)
+
+poldb <- read_xlsx("C:/Users/Caroline/Desktop/MIDP SEMESTER IV/Introduction to Data Science R/SNAP_modeling/data/SNAPPolicyDatabase.xlsx", sheet = "SNAP Policy Database")
+
+abawd_waivers <- read_xlsx("C:/Users/Caroline/Desktop/MIDP SEMESTER IV/Introduction to Data Science R/SNAP_modeling/data/SNAPPolicyDatabase.xlsx", 
+                           sheet = "ABAWD Waivers")
+
+poldb_2023 <- read_xlsx("C:/Users/Caroline/Desktop/MIDP SEMESTER IV/Introduction to Data Science R/SNAP_modeling/data/SNAPPolicyDatabase.xlsx", 
+                        sheet = "2023 Data")
+
+mode <- function(x) {
+  u <- unique(x)
+  tab <- tabulate(match(x, u))
+  u[tab == max(tab)]
+}
+
+
+
+combined_poldb <- poldb |>
+  mutate(year = as.numeric(str_sub(as.character(yearmonth), 1, 4))) |>
+  group_by(year, state_fips) |>
+  summarize(bbce = mode(bbce),
+            bbce_asset = mode(bbce_asset),
+            bbce_inclmt = mode(bbce_inclmt)) |>
+  left_join(abawd_waivers, by = c("state_fips", "year")) |>
+  bind_rows(poldb_2023) |>
+  filter(year > 2014,
+         year != 2020) |>
+  mutate(state_fips = as.character(state_fips),
+         state_fips = case_when(
+           state_fips == "1" ~ "01",
+           state_fips == "2" ~ "02",
+           state_fips == "4" ~ "04",
+           state_fips == "5" ~ "05",
+           state_fips == "6" ~ "06",
+           state_fips == "8" ~ "08",
+           state_fips == "9" ~ "09",
+           TRUE ~ state_fips
+         ))
+
+```
+
+## Merging datasets
+
+```{r}
+snap_2model <- snap_participation |>
+  left_join(demographic_combined, by = c("GEOID", "year")) |>
+  left_join(combined_poldb, by = c("state_fips", "year")) |>
+  drop_na() |>
+  filter(snap_participation_rate < 1) |>
+  select(-median_income_individual)
+
+county_observations <- snap_2model |>
+  group_by(GEOID) |>
+  summarize(num_obs = n()) |>
+  filter(num_obs<6)
+
+snap_2model <- snap_2model |>
+  anti_join(county_observations, by = "GEOID")
+
+```
+
+## Split up testing and training
+
+```{r}
+snap_test <- snap_2model |>
+  filter(year==2023)
+
+snap_train <- snap_2model |>
+  filter(year!=2023)
+
+```
+
+
+
+
+
+## Exploratory Data Analysis
+
+```{r}
+national_avg <- snap_2model |>
+  group_by(year) |>
+  summarize(national_avg_rate = mean(snap_participation_rate, na.rm = TRUE))
+
+
+ ggplot(national_avg, aes(x = year, y = national_avg_rate)) +
+  geom_line(size = 1.2, color = "darkblue") +
+  geom_point(color = "darkred") +
+  labs(
+    title = "National Average SNAP Participation Rate by Year",
+    x = "Year", y = "Average Participation Rate"
+  ) +
+  theme_minimal()
+
+
+```
+
+```{r}
+# Find highest and lowest participation states per year
+state_extremes <- snap_2model |>
+  group_by(year, state_name) |>
+  summarize(state_avg = mean(snap_participation_rate, na.rm = TRUE), .groups = "drop") |>
+  group_by(year) |>
+  slice_max(order_by = state_avg, n = 1, with_ties = FALSE) |>
+  rename(highest_state = state_name, highest_rate = state_avg) |>
+  full_join(
+    snap_2model |>
+      group_by(year, state_name) |>
+      summarize(state_avg = mean(snap_participation_rate, na.rm = TRUE), .groups = "drop") |>
+      group_by(year) |>
+      slice_min(order_by = state_avg, n = 1, with_ties = FALSE) |>
+      rename(lowest_state = state_name, lowest_rate = state_avg),
+    by = "year"
+  )
+print(state_extremes)
+
+
+```
+
+```{r}
+library(tidyverse)
+
+snap_2model %>%
+  select(snap_participation_rate, poverty_pct, renter_pct, unemployment_rate, over_65_pct) %>%
+  pivot_longer(cols = c(poverty_pct, renter_pct, unemployment_rate, over_65_pct),
+               names_to = "predictor", values_to = "value") %>%
+  ggplot(aes(x = value, y = snap_participation_rate)) +
+  geom_point(alpha = 0.3) +
+  geom_smooth(method = "lm", color = "blue") +
+  facet_wrap(~ predictor, scales = "free_x") +
+  labs(title = "Predictor Variables vs SNAP Participation Rate",
+       x = "Predictor Value", y = "SNAP Participation Rate") +
+  theme_minimal()
+
+```
+
+
+
+
+```{r}
+library(tidyverse)
+
+# Z-score standardize selected predictors
+plot_df <- snap_2model |>
+  mutate(across(c(poverty_pct, renter_pct, unemployment_rate, over_65_pct), scale)) |>
+  select(snap_participation_rate, poverty_pct, renter_pct, unemployment_rate, over_65_pct) |>
+  pivot_longer(cols = -snap_participation_rate, names_to = "predictor", values_to = "value")
+
+# Improved scatterplot
+ggplot(plot_df, aes(x = value, y = snap_participation_rate)) +
+  geom_point(alpha = 0.15, color = "gray", size = 0.8) +
+  geom_smooth(method = "lm", color = "blue", se = FALSE, linewidth = 1) +
+  facet_wrap(~ predictor, scales = "free_x",
+             labeller = as_labeller(c(
+               poverty_pct = "Poverty (%)",
+               renter_pct = "Renter Share (%)",
+               unemployment_rate = "Unemployment (%)",
+               over_65_pct = "Population Over 65 (%)"
+             ))) +
+  labs(
+    title = "Standardized Predictors vs SNAP Participation Rate",
+    x = "Standardized Value (Z-Score)",
+    y = "SNAP Participation Rate"
+  ) +
+  theme_minimal(base_size = 13)
+
+
+```
+
+
+
+```{r}
+library(ggplot2)
+
+snap_map %>%
+  filter(year == 2019) %>%
+  ggplot() +
+  geom_sf(aes(fill = snap_participation_rate), color = NA) +
+  scale_fill_gradient(low = "#cfe8f3", high = "#062635", na.value = "grey90") +
+  labs(title = "SNAP Participation Rate by County (2019)",
+       fill = "Participation Rate") +
+  theme_void() +
+  theme(legend.position = "bottom")
+
+```
+
+
+```{r}
+ggplot(snap_2model, aes(x = factor(rural_urban_score), y = snap_participation_rate)) +
+  geom_boxplot(fill = "lightblue") +
+  labs(title = "Urban-Rural Code vs SNAP Participation", x = "RUCC Code (1 = Urban, 9 = Most Rural)", y = "SNAP Participation Rate") +
+  theme_minimal()
+
+```
+
+
+```{r}
+library(ggplot2)
+
+snap_2model |>
+  select(poverty_pct, median_household_income, disabled_pct, rural_urban_score) |>
+  pivot_longer(cols = everything(), names_to = "variable", values_to = "value") |>
+  ggplot(aes(x = value)) +
+  geom_histogram(bins = 30, fill = "skyblue", color = "black") +
+  facet_wrap(~ variable, scales = "free") +
+  labs(title = "Distributions of Key Variables", x = "Value", y = "Count") +
+  theme_minimal()
+
+```
+
+
+
+
+
+```{r}
+ggplot(snap_2model, aes(x = disabled_pct, y = snap_participation_rate)) +
+  geom_point(alpha = 0.2) +
+  geom_smooth(method = "lm", color = "steelblue") +
+  labs(
+    title = "Disability Rate vs SNAP Participation Rate",
+    x = "Share of County Population with Disability",
+    y = "SNAP Participation Rate"
+  ) +
+  theme_minimal()
+
+```
+
+
+## Training models
+
+## Testing final model
+
+## Implementing model (fingers crossed)

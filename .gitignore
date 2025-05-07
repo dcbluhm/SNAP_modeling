@@ -53,3 +53,6 @@ data/
 
 # R project
 .Rproj
+
+*.xlsx
+
