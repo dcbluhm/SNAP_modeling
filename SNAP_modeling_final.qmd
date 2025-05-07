@@ -647,7 +647,7 @@ snap_train |>
 Average SNAP participation rates vary significantly across states, ranging from Virginia at just below 15%, to its neighbor West Virginia at nearly 25%.
 
 
-SNAP participation rates by median income and poverty rate.
+Now we investigate the relationship between SNAP participation rates and various county-level economic conditions. 
 
 ```{r}
 snap_train |> filter(year == 2019) |>
@@ -669,21 +669,28 @@ snap_train |> filter(year == 2019) |>
   theme_minimal()
 
 snap_train |> filter(year == 2019) |>
-  ggplot(mapping = aes(x = white_pct, y = snap_participation_rate)) + 
-  geom_point(alpha = 0.25) +
-  stat_smooth(method = "lm", 
-              formula = y ~ x, 
-              geom = "smooth") +
-  labs(x = "Percentage White", y = "SNAP Participation Rate", title = "SNAP Participation Rate by County Racial Demographics 2019") +
-  theme_minimal()
-
-snap_train |> filter(year == 2019) |>
   ggplot(mapping = aes(x = unemployment_rate, y = snap_participation_rate)) + 
   geom_point(alpha = 0.25) +
   stat_smooth(method = "lm", 
               formula = y ~ x, 
               geom = "smooth") +
   labs(x = "Unemployment Rate", y = "SNAP Participation Rate", title = "SNAP Participation Rate by Unemployment Rate 2019") +
+  theme_minimal()
+
+```
+
+We see a strong negative association between SNAP participation rates and median household income, and a positive associations between SNAP participation rates and poverty and unemployment. The relationship between poverty and SNAP participation is especially strong, tightly hugging the line of best fit. These associations are not surprising, given SNAP's status as a means-tested benefit program.
+
+We now examine the relationship between SNAP and county demographic characteristics.
+
+```{r}
+snap_train |> filter(year == 2019) |>
+  ggplot(mapping = aes(x = white_pct, y = snap_participation_rate)) + 
+  geom_point(alpha = 0.25) +
+  stat_smooth(method = "lm", 
+              formula = y ~ x, 
+              geom = "smooth") +
+  labs(x = "Percentage White", y = "SNAP Participation Rate", title = "SNAP Participation Rate by County Racial Demographics 2019") +
   theme_minimal()
 
 snap_train |> filter(year == 2019) |>
@@ -699,8 +706,9 @@ snap_train |> filter(year == 2019) |>
   theme_minimal()
 
 ```
+Counties with a higher percentage of white residents tend to participate less in SNAP. Urbanicity does not have a simple linear relationship with SNAP participation. The most urban counties (those with an urban-rural score of 1) have the lowest rates of SNAP participation, and the highest levels are seen in suburban counties, with the most rural counties (with a score of 9) in the middle.
 
-Policy Variables
+Finally, we explore the relationship between SNAP participation and our selected policy variables.
 
 ```{r}
 snap_train |> filter(year == 2019) |>
@@ -731,7 +739,7 @@ snap_train |> filter(year == 2019) |>
 snap_train |> filter(year == 2019) |>
   mutate(abawdwaiver= case_when(
     abawdwaiver == 0 ~ "No waivers",
-    abawdwaiver == 1 ~ "Waivers for Part of State",
+    abawdwaiver == 1 ~ "Waivers Covering Part of State",
     abawdwaiver == 2 ~ "Waivers for Entire State"
   )) |>
   group_by(abawdwaiver) |>
@@ -745,6 +753,8 @@ snap_train |> filter(year == 2019) |>
   theme_minimal()
 
 ```
+
+We don't see any difference in SNAP participation rates between states who implement BBCE and those who don't. Moreover, SNAP participation rates do not seem to have a simple linear association with income limits for eligibility. Perhaps there are other variables that confound the relationships between BBCE, the income limit, and SNAP participation, such as poverty. ABAWD time limit waivers, unsurprisingly, have a positive association with SNAP participation, suggesting that these waivers make it easier for people to receive SNAP benefits.
 
 # Data Analysis
 
