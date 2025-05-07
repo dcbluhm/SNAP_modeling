@@ -4,9 +4,11 @@ format: html
 editor: visual
 ---
 
+
 ## SNAP Participation Rates
 
 NOTE: CT changed how their counties are organized, so the county groupings from 2015-2019 no longer seem to apply - can ask Alena about this, but seems like we may just want to drop. AK also added a county, but it seems like most of them are still the same, so it should be ok to include.
+
 
 ```{r message=FALSE, warning=FALSE}
 
@@ -221,7 +223,9 @@ table(snap_participation$state_name,snap_participation$year)
 
 ```
 
+
 ## Demographic and Economic Predictors
+
 
 ```{r}
 #Census Data
@@ -472,7 +476,9 @@ demographic_combined <- demographic_combined |>
 
 ```
 
+
 ## SNAP Policy Predictors
+
 
 ```{r}
 library(readxl)
@@ -513,7 +519,9 @@ combined_poldb <- poldb |>
 
 ```
 
+
 ## Merging datasets
+
 
 ```{r}
 snap_2model <- snap_participation |>
@@ -533,7 +541,9 @@ snap_2model <- snap_2model |>
 
 ```
 
+
 ## Split up testing and training
+
 
 ```{r}
 snap_test <- snap_2model |>
@@ -544,6 +554,7 @@ snap_train <- snap_2model |>
 
 ```
 
+
 ## Exploratory Data Analysis
 
 ## Training models
@@ -551,3 +562,4 @@ snap_train <- snap_2model |>
 ## Testing final model
 
 ## Implementing model (fingers crossed)
+

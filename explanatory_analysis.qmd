@@ -974,6 +974,17 @@ ggplot(plot_df, aes(x = value, y = snap_participation_rate)) +
 
 ```
 
+This set of scatterplots with fitted trend lines shows how key standardized predictors relate to SNAP participation rates across U.S. counties:
+
+Poverty (%): There's a strong positive relationship—counties with higher poverty rates tend to have significantly higher SNAP participation rates.
+
+Renter Share (%): Also shows a positive association—counties with a higher share of renters generally report higher participation in SNAP.
+
+Unemployment (%): Positively associated as well, though the relationship is weaker compared to poverty and renter share.
+
+Population Over 65 (%): Interestingly, there's a slight negative association—counties with a higher elderly population tend to have marginally lower SNAP participation rates.
+
+
 ```{r}
 ggplot(snap_2model, aes(x = factor(rural_urban_score), y = snap_participation_rate)) +
   geom_boxplot(fill = "lightblue") +
@@ -1019,6 +1030,17 @@ snap_2model |>
   theme_minimal()
 
 ```
+Interpretation of Key Variable Distributions
+
+The figure displays the distribution of four important predictors related to SNAP participation:
+
+Disabled Population Percentage (disabled_pct) is approximately normally distributed, centering around 50%. This suggests moderate variation across counties, with few extreme values.
+
+Median Household Income shows a right-skewed distribution, indicating most counties have household incomes below $60,000, with a long tail of higher-income counties.
+
+Poverty Rate (poverty_pct) is also right-skewed, with most counties falling between 10% and 30% poverty rates, and fewer counties experiencing very high poverty.
+
+The RUCC distribution shows a bimodal pattern with most counties clustering in both urban (1–3) and rural (6–9) categories, highlighting a gap in mid-spectrum rurality.
 
 ```{r}
 ggplot(snap_2model, aes(x = disabled_pct, y = snap_participation_rate)) +
